@@ -10,16 +10,17 @@ import dash
 from dash import html, dcc
 from dash.dependencies import Input, Output
 
-from lepton import Lepton  # updated: use refactored lepton.py
+from lepton import Lepton
 
 
 class FrameProducer:
     """Background thread capturing frames and keeping the latest PNG bytes
     and min/max temperatures in Fahrenheit.
     """
-    def __init__(self, spi_bus=0, spi_device=0, speed_hz=18000000, interval_s=0.1):
-        self.lepton = Lepton(spi_bus, spi_device, speed_hz)
-        self.interval = interval_s
+
+    def __init__(self, interval=0.1):
+        self.lepton = Lepton()
+        self.interval = interval
         self.lock = threading.Lock()
         self.png_bytes = None
         self.min_f = None
@@ -31,30 +32,41 @@ class FrameProducer:
     def _run(self):
         while self.running:
             try:
-                frame16 = self.lepton.capture()  # expected: raw 16-bit frame (centi-Kelvin)
-                if frame16 is not None:
-                    # compute temperatures in Fahrenheit using Lepton helper
-                    try:
-                        temps_f = Lepton.to_fahrenheit(frame16)
-                    except Exception:
-                        # if capture already returned temps, fall back to using the array as-is
-                        temps_f = frame16.astype(np.float32)
+                frame = self.lepton.capture()  # expected: raw 16-bit frame (centi-Kelvin)
+                if frame is None:
+                    continue
 
+                frame = Lepton.to_fahrenheit(frame)
+                frameMin = float(np.nanmin(frame))
+                frameMax = float(np.nanmax(frame))
+
+                frame = cv2.resize(frame, (frame.shape[1]*4, frame.shape[0]*4),
+                                   interpolation=cv2.INTER_NEAREST)
+                frame = cv2.GaussianBlur(frame, (13, 13), 0)
+                frame = cv2.normalize(
+                    frame, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+
+                # Step 4: Find contours
+                # First, threshold or normalize the image to get binary values
+                _, thresh = cv2.threshold(frame, 220, 255, cv2.THRESH_BINARY)
+                contours, _ = cv2.findContours(
+                    thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+                frame = cv2.normalize(
+                    frame, None, 50, 200, cv2.NORM_MINMAX).astype(np.uint8)
+                frame = cv2.applyColorMap(frame, cv2.COLORMAP_HOT)
+                cv2.drawContours(frame, contours, -1, (0, 255, 0), 2)
+
+                ok, buf = cv2.imencode('.png', frame)
+                if ok:
                     with self.lock:
-                        self.min_f = float(np.nanmin(temps_f))
-                        self.max_f = float(np.nanmax(temps_f))
+                        self.png_bytes = buf.tobytes()
+                        self.min_f = frameMin
+                        self.max_f = frameMax
+                    time.sleep(self.interval)
 
-                    # prepare PNG for serving (use the raw 16-bit image for normalization)
-                    frame8 = cv2.normalize(frame16, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-                    colored = cv2.applyColorMap(frame8, cv2.COLORMAP_INFERNO)
-                    ok, buf = cv2.imencode('.png', colored)
-                    if ok:
-                        with self.lock:
-                            self.png_bytes = buf.tobytes()
             except Exception:
-                # keep running on capture errors; could log if desired
                 pass
-            time.sleep(self.interval)
 
     def get_png(self):
         with self.lock:
@@ -86,6 +98,8 @@ app = dash.Dash(__name__)
 server = app.server  # Flask server used for route below
 
 # a simple endpoint that returns latest PNG
+
+
 @server.route("/frame.png")
 def frame_png():
     png = producer.get_png()
@@ -99,7 +113,8 @@ def frame_png():
 app.layout = html.Div(
     [
         html.H3("Lepton Live (thermal)"),
-        html.Img(id="frame", src="/frame.png", style={"width": "640px", "height": "480px"}),
+        html.Img(id="frame", src="/frame.png",
+                 style={"width": "640px", "height": "480px"}),
         dcc.Interval(id="interval", interval=200, n_intervals=0),  # 200 ms
         html.Div(id="stats", style={"marginTop": "8px", "fontSize": "16px"})
     ],

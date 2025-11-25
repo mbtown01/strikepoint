@@ -17,6 +17,34 @@
             "request": "launch",
             "program": "app.py",
             "console": "internalConsole"
+        },
+        {
+            "name": "Diagnose stuff",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "diagnose.py",
+            "console": "internalConsole"
+        },
+        {
+            "name": "Debug demo.c",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/driver/Debug/demo",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/driver",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "miDebuggerPath": "/usr/bin/gdb",
+            "preLaunchTask": "build demo",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
         }
     ]
 }

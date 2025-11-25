@@ -5,6 +5,9 @@ __pycache__/
 
 # C extensions
 *.so
+*.o
+driver/Release
+driver/Debug
 
 # Distribution / packaging
 .Python

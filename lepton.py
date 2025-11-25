@@ -140,47 +140,83 @@ class LeptonControl:
 
 
 class Lepton:
-    def __init__(self, spi_bus=0, spi_device=0, speed_hz=4000000):
+    def __init__(self, spi_bus=0, spi_device=0, speed_hz=4*1000*1000):
         self.spi = spidev.SpiDev()
         self.spi.open(spi_bus, spi_device)
         self.spi.max_speed_hz = speed_hz
         self.spi.mode = 0
+        # self.spi.cshigh = True
         self.packets_per_frame = 60
         self.packet_size = 164
         self.frame_width = 80
         self.frame_height = 60
 
+        lc = LeptonControl()
+        lc.enable_radiometry(True)
+        lc.enable_agc(True)
+        time.sleep(0.3)
+
     def close(self):
         self.spi.close()
 
+    def _read_packet(self):
+        packet = bytes(self.spi.xfer2([0] * self.packet_size))
+        if len(packet) != self.packet_size:
+            raise IOError(f"Short packet: {len(packet)}/{self.packet_size}")
+        # if packet[0] not in (0x0, 0x0e, 0x0f):
+        #     raise IOError(f"Invalid packet header byte: 0x{packet[0]:02x}")
+        return packet
+
+    def _is_bad_line(self, line):
+        # obvious corruption: all zeros or all 0xFFFF
+        if np.all(line == 0) or np.all(line == 0xFFFF):
+            return True
+        # no variance at all (flat line) — suspicious if many occur in frame
+        if line.std() == 0:
+            return True
+        return False
+
+    def _validate_frame(self, f):
+        # not all pixels identical
+        if np.all(f == f.flat[0]):
+            print("Frame validation: all pixels identical")
+            return False
+        # count flat rows
+        flat_rows = sum(1 for r in range(f.shape[0]) if f[r].std() == 0)
+        if flat_rows > max(3, f.shape[0] // 6):
+            print(
+                f"Frame validation: too many flat rows ({flat_rows}/{f.shape[0]})")
+            return False
+        # crude range check (prevent saturation/garbage)
+        mn, mx = f.min(), f.max()
+        if mn == 0 and mx == 0xFFFF:
+            print("Frame validation: full-range saturation (0..0xFFFF)")
+            return False
+        return True
+
     def _read_frame_raw(self, timeout=2.0):
-        """Read a raw frame from SPI.
+        """Read a raw frame from SPI with stronger validation.
 
         Wait until a true packet-0 is observed, then collect packets by their
         packet-number into the frame buffer until all lines [0..packets_per_frame-1]
         have been received or timeout occurs.
+
+        Performs per-line sanity checks and final frame validation. Raises
+        IOError on any detected corruption so capture() can retry.
         """
         frame = np.zeros(
             (self.frame_height, self.frame_width), dtype=np.uint16)
 
-        def _read_packet():
-            # use xfer2 to clock out data while keeping CS asserted across the transfer
-            raw = self.spi.xfer2([0] * self.packet_size)
-            pkt = bytes(raw)
-            if len(pkt) != self.packet_size:
-                raise IOError(f"Short packet: {len(pkt)}/{self.packet_size}")
-            return pkt
-
-        # Wait for packet-0 (start of a new frame)
+        # Wait for packet-0
         start_wait = time.time()
         while True:
             if timeout is not None and (time.time() - start_wait) > timeout:
                 raise IOError("Timeout waiting for packet 0")
-            packet = _read_packet()
-            if (packet[0] & 0x0F) == 0 and packet[1] == 0:
+            packet = self._read_packet()
+            time.sleep(0.005)
+            if packet[0] & 0x0F == 0 and packet[1] == 0:
                 break
 
-        # Place packet 0
         line = np.frombuffer(packet[4:], dtype=np.uint16)
         frame[0] = line.byteswap()
         received = [False] * self.packets_per_frame
@@ -191,23 +227,46 @@ class Lepton:
         # Collect until all packets received or timeout
         while remaining > 0:
             if timeout is not None and (time.time() - start_collect) > timeout:
-                raise IOError(f"Timeout collecting frame")
+                raise IOError(
+                    f"Timeout collecting frame ({self.packets_per_frame-remaining}/{self.packets_per_frame})")
 
             # small pause can help marginal bus timings
-            time.sleep(0.0005)
-            packet = _read_packet()
+            time.sleep(0.005)
+            packet = self._read_packet()
             # ignore discard/corrupt headers
-            if (packet[0] & 0x0F) != 0:
+            if packet[0] & 0xf == 0xf or packet[0] & 0xf == 0xe:
+                # debug print occasionally
+                hdr0 = packet[0]
+                hdr1 = packet[1]
+                first8 = ' '.join(f"{b:02x}" for b in packet[:8])
+                # print(f"/dev/spidev{bus}.{dev} mode={mode} speed={speed//1000}k cs_high={cs}")
+                print(
+                    f"hdr0=0x{hdr0:02x} (low={hdr0 & 0x0f:x}) hdr1=0x{hdr1:02x} first8={first8}")
+                print(' '.join(f"{b:02x}" for b in packet))
+                print(f"Discard header: {packet[0]:02x} pkt#{packet[1]}")
                 continue
+
             pkt_num = packet[1]
             if pkt_num >= self.packets_per_frame:
+                # invalid packet number; skip
+                print(f"Ignoring invalid packet number {pkt_num}")
                 continue
+
             if not received[pkt_num]:
                 line = np.frombuffer(packet[4:], dtype=np.uint16)
+                if self._is_bad_line(line):
+                    # drop the bad line and keep collecting until we get a valid one for this index
+                    print(
+                        f"Bad/corrupt line for packet {pkt_num}; header={packet[0]:02x}")
+                    continue
                 frame[pkt_num] = line.byteswap()
                 received[pkt_num] = True
                 remaining -= 1
-            # else duplicate packet - ignore
+            # else duplicate - ignore
+
+        # final validation
+        if not self._validate_frame(frame):
+            raise IOError("Frame failed validation checks")
 
         return frame
 
@@ -236,4 +295,3 @@ class Lepton:
         """Convert radiometric 16-bit frame to degrees Fahrenheit."""
         c = Lepton.to_celsius(frame16)
         return c * 9.0 / 5.0 + 32.0
-
