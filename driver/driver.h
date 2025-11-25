@@ -2,10 +2,11 @@
 #define __LEPTON_H__
 
 #include <stdint.h>
+#include <stdbool.h>
 
 
 int LEPSDK_Init();
-int LEPSDK_GetFrame(uint16_t *frameBuffer);
+int LEPSDK_GetFrame(float *frameBuffer, bool asFahrenheit);
 int LEPSDK_Shutdown();
 
 #endif

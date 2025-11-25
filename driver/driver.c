@@ -15,22 +15,22 @@
 #include "LEPTON_SYS.h"
 #include "LEPTON_OEM.h"
 
-#define LEP_ERROR(msg)             \
-    do                             \
-    {                              \
-        strcpy(_glbErrorMsg, msg); \
-        return -1;                 \
+#define LEP_ERROR(msg)                                                \
+    do                                                                \
+    {                                                                 \
+        printf("ERROR in %s line %d: %s\n", __FILE__, __LINE__, msg); \
+        return -1;                                                    \
     } while (0)
 
-#define LEP_ASSERT(cmd)                                     \
-    do                                                      \
-    {                                                       \
-        LEP_RESULT result = cmd;                            \
-        if (result != LEP_OK)                               \
-        {                                                   \
-            printf("Error calling %s: %d\n", #cmd, result); \
-            return result;                                  \
-        }                                                   \
+#define LEP_ASSERT(cmd)                                                                 \
+    do                                                                                  \
+    {                                                                                   \
+        LEP_RESULT result = cmd;                                                        \
+        if (result != LEP_OK)                                                           \
+        {                                                                               \
+            printf("ERROR in %s line %d: %d = %s\n", __FILE__, __LINE__, result, #cmd); \
+            return result;                                                              \
+        }                                                                               \
     } while (0)
 
 #define FRAME_WIDTH 80
@@ -123,19 +123,30 @@ int LEPSDK_InitI2C()
     printf("Camera Status: %d, Command Count: %d\n",
            statusDesc.camStatus, statusDesc.commandCount);
 
-    LEP_POLARITY_E polarityDesc;
-    LEP_ASSERT(LEP_GetVidPolarity(&_gblSession->portDesc, &polarityDesc));
-    printf("Video Polarity: %d\n", polarityDesc);
+    // LEP_POLARITY_E polarityDesc;
+    // LEP_ASSERT(LEP_GetVidPolarity(&_gblSession->portDesc, &polarityDesc));
+    // printf("Video Polarity: %d\n", polarityDesc);
 
     LEP_ASSERT(LEP_RunSysFFCNormalization(&_gblSession->portDesc));
     usleep(500000); // Wait for a second to allow FFC to complete
 
-    // Check the system status
-    LEP_ASSERT(LEP_GetSysStatus(&_gblSession->portDesc, &statusDesc));
-    printf("Camera Status: %d, Command Count: %d\n",
-           statusDesc.camStatus, statusDesc.commandCount);
+    // // Check the system status
+    // LEP_ASSERT(LEP_GetSysStatus(&_gblSession->portDesc, &statusDesc));
+    // printf("Camera Status: %d, Command Count: %d\n",
+    //        statusDesc.camStatus, statusDesc.commandCount);
 
     return 0;
+}
+
+int LEPSDK_CloseI2C()
+{
+    if (_gblSession == NULL)
+        LEP_ERROR("SDK not initialized");
+
+    // Close the camera port
+    LEP_ASSERT(LEP_ClosePort(&_gblSession->portDesc));
+
+    return (0);
 }
 
 int LEPSDK_Init()
@@ -149,13 +160,12 @@ int LEPSDK_Init()
     return (0);
 }
 
-int LEPSDK_GetFrame(uint16_t *frameBuffer)
+int LEPSDK_GetFrame(float *frameBuffer, bool asFahrenheit)
 {
     if (_gblSession == NULL)
         LEP_ERROR("SDK not initialized");
 
     uint8_t buff[PACKETS_PER_FRAME][PACKET_SIZE];
-    int resets = 0;
 
     for (int attempt = 0; attempt < 30; attempt)
     {
@@ -169,13 +179,10 @@ int LEPSDK_GetFrame(uint16_t *frameBuffer)
         if (tries == 0)
             LEP_ERROR("Could not sync to packet start");
 
-        // printf("Found header after %d tries\n", 1000 - tries);
-
         int goodPackets = 1;
         for (int p = 1; p < PACKETS_PER_FRAME; p++)
         {
             read(_gblSession->spiFd, buff[p], PACKET_SIZE);
-            // printf("[DATA header=%02x packet=%02d]\n", buff[p][0], buff[p][1]);
             if (buff[p][0] & 0x0F != 0 || buff[p][1] != p)
                 break;
             goodPackets++;
@@ -191,20 +198,14 @@ int LEPSDK_GetFrame(uint16_t *frameBuffer)
             continue;
         }
 
-        printf("ready, goodPackets=%d resets=%d\n", goodPackets, resets);
-
-        // for (int p = 0; p < PACKETS_PER_FRAME; p++)
-        // {
-        //     for (int i = 2; i < PACKET_SIZE_UINT16; i++)
-        //     {
-        //         int index = p * (PACKET_SIZE_UINT16 - 2) + (i - 2);
-        //         frameBuffer[index] = (buff[p][i * 2] << 8) + buff[p][i * 2 + 1];
-        //     }
-        // }
-
-        for (int r = 0; r < FRAME_HEIGHT; r++)
-            for (int c = 0; c < FRAME_WIDTH; c++)
-                frameBuffer[r * FRAME_WIDTH + c] = (buff[r][4 + 2 * c] << 8) + buff[r][4 + 2 * c + 1];
+        for (int i = 0; i < FRAME_WIDTH * FRAME_HEIGHT; i++)
+        {
+            int r = i / FRAME_WIDTH, c = i % FRAME_WIDTH;
+            uint16_t v = (buff[r][4 + 2 * c] << 8) + buff[r][4 + 2 * c + 1];
+            frameBuffer[i] = (float)v * 0.01f - 273.15f; // Convert to Celsius
+            if (asFahrenheit)
+                frameBuffer[i] = (frameBuffer[i] * 9.0f / 5.0f) + 32.0f;
+        }
 
         return 0;
     }
@@ -214,10 +215,11 @@ int LEPSDK_GetFrame(uint16_t *frameBuffer)
 
 int LEPSDK_Shutdown()
 {
-    LEPSDK_CloseSpi();
+    if (_gblSession == NULL)
+        LEP_ERROR("SDK not initialized");
 
-    // Close the camera port
-    LEP_ASSERT(LEP_ClosePort(&_gblSession->portDesc));
+    LEPSDK_CloseSpi();
+    LEPSDK_CloseI2C();
 
     free(_gblSession);
     _gblSession = NULL;

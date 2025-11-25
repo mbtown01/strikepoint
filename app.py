@@ -10,7 +10,8 @@ import dash
 from dash import html, dcc
 from dash.dependencies import Input, Output
 
-from lepton import Lepton
+from driver import LeptonDriver
+# from lepton import Lepton
 
 
 class FrameProducer:
@@ -19,24 +20,25 @@ class FrameProducer:
     """
 
     def __init__(self, interval=0.1):
-        self.lepton = Lepton()
+        self.driver = LeptonDriver()
         self.interval = interval
         self.lock = threading.Lock()
         self.png_bytes = None
         self.min_f = None
         self.max_f = None
         self.running = True
+
+        if 0 != self.driver.init():
+            raise RuntimeError("Could not initialize Lepton driver")
+
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
+
 
     def _run(self):
         while self.running:
             try:
-                frame = self.lepton.capture()  # expected: raw 16-bit frame (centi-Kelvin)
-                if frame is None:
-                    continue
-
-                frame = Lepton.to_fahrenheit(frame)
+                frame = self.driver.get_frame(True)
                 frameMin = float(np.nanmin(frame))
                 frameMax = float(np.nanmax(frame))
 
@@ -80,6 +82,7 @@ class FrameProducer:
 
     def stop(self):
         self.running = False
+        self.driver.shutdown()
         try:
             self.thread.join(timeout=1.0)
         except Exception:
