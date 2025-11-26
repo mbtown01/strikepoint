@@ -2,13 +2,11 @@
 __pycache__/
 *.py[codz]
 *$py.class
-output.bin
+*.bin
 
 # C extensions
-*.so
-*.o
-driver/Release
-driver/Debug
+leptonDriver/Release
+leptonDriver/Debug
 
 # Distribution / packaging
 .Python
@@ -18,7 +16,6 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
 lib64/
 parts/
 sdist/
