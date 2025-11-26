@@ -28,10 +28,6 @@ class FrameProducer:
         self.interval = interval
         self.lastFrameInfo = None
         self.running = True
-
-        if 0 != self.driver.init():
-            raise RuntimeError("Could not initialize Lepton driver")
-
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
 

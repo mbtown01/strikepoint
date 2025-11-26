@@ -7,7 +7,6 @@ from dash.dependencies import Input, Output
 from strikepoint.producer import FrameProducer
 
 
-
 class StrikePointDashApp:
 
     def __init__(self, interval=0.1):
@@ -27,7 +26,7 @@ class StrikePointDashApp:
             [
                 html.H3("Lepton Live (thermal)"),
                 html.Img(id="frame", src="/stream.mjpg",
-                         style={"width": "640px", "height": "480px"}),
+                         style={"width": "320", "height": "240"}),
                 dcc.Interval(id="interval", interval=200,
                              n_intervals=0),  # 200 ms
                 html.Div(id="stats", style={

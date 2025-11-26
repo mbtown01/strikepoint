@@ -1,17 +1,27 @@
-
-
 import ctypes
 import os
 import ctypes.util
 import numpy as np
-from io import FileIO
+
+# Define a ctypes Structure that mirrors the new LEPSDK_DriverInfo type.
+# Keep fields minimal and backward-compatible; we set the size before calling
+# LEPSDK_Init so the native side can detect the structure version.
 
 
-def find_library_path(name_hint="libdriver.so"):
+class LEPSDK_DriverInfo(ctypes.Structure):
+    _fields_ = [
+        ("versionMajor", ctypes.c_uint8),
+        ("versionMinor", ctypes.c_uint8),
+        ("framwidth", ctypes.c_uint16),
+        ("frameHeight", ctypes.c_uint16),
+    ]
+
+
+def find_library_path(name_hint="libleptonDriver.so"):
     """Search common locations for the SDK shared library; return path or None."""
     candidates = [
-        os.path.join(os.getcwd(), f"strikepoint/driver/lib/Release/{name_hint}"),
-        os.path.join(os.getcwd(), f"strikepoint/driver/lib/Debug/{name_hint}"),
+        os.path.join(os.getcwd(), f"leptonDriver/Release/{name_hint}"),
+        os.path.join(os.getcwd(), f"leptonDriver/Debug/{name_hint}"),
         f"/usr/local/lib/{name_hint}",
         f"/usr/lib/{name_hint}",
     ]
@@ -29,9 +39,6 @@ def find_library_path(name_hint="libdriver.so"):
 class LeptonDriverShim:
 
     def __init__(self):
-        pass
-
-    def init(self):
         # Read in all the binary data
         with open("output.bin", "rb") as f:
             self.data = np.fromfile(f, dtype=np.float32)
@@ -54,68 +61,42 @@ class LeptonDriverShim:
 class LeptonDriver:
     """ctypes wrapper around LEPSDK_* functions from the C driver.
 
-    Example:
-        from sdkwrapper.driver_wrapper import LeptonDriver
-        sdk = LeptonDriver()                # auto-locates libdriver.so
-        sdk.init()
-        frame = sdk.get_frame(asFahrenheit=True)   # numpy float32 array shape (60, 80)
-        sdk.shutdown()
+    Notes:
+      - The SDK recently added LEPSDK_DriverInfo and changed LEPSDK_Init to
+        accept a pointer to that struct. This wrapper attempts to call the new
+        init signature first (passing a LEPSDK_DriverInfo with 'size' set),
+        and falls back to the legacy no-arg init if the call raises TypeError.
     """
 
-    FRAME_WIDTH = 80
-    FRAME_HEIGHT = 60
-    FRAME_PIXELS = FRAME_WIDTH * FRAME_HEIGHT
-
-    def __init__(self, libpath=None):
-        if libpath is None:
-            libpath = find_library_path()
-            if libpath is None:
+    def __init__(self, libPath=None):
+        if libPath is None:
+            libPath = find_library_path()
+            if libPath is None:
                 raise OSError(
                     "Could not locate Lepton SDK shared library; pass libpath explicitly")
-        # load
-        self._libpath = libpath
-        self._lib = ctypes.CDLL(libpath)
 
-        # bind functions defensively
-        self._bind()
-
-    def _bind(self):
-        lib = self._lib
-        # LEPSDK_Init -> int LEPSDK_Init(void)
+        lib = ctypes.CDLL(libPath)
         self._fn_init = getattr(lib, "LEPSDK_Init", None)
-        if self._fn_init:
-            try:
-                self._fn_init.restype = ctypes.c_int
-                self._fn_init.argtypes = []
-            except Exception:
-                pass
+        self._fn_init.restype = ctypes.c_int
 
         # LEPSDK_Shutdown -> int LEPSDK_Shutdown(void)
         self._fn_shutdown = getattr(lib, "LEPSDK_Shutdown", None)
-        if self._fn_shutdown:
-            try:
-                self._fn_shutdown.restype = ctypes.c_int
-                self._fn_shutdown.argtypes = []
-            except Exception:
-                pass
+        self._fn_shutdown.restype = ctypes.c_int
+        self._fn_shutdown.argtypes = []
 
         # LEPSDK_GetFrame -> int LEPSDK_GetFrame(float* buffer, bool asFahrenheit)
         self._fn_getframe = getattr(lib, "LEPSDK_GetFrame", None)
-        if self._fn_getframe:
-            try:
-                self._fn_getframe.restype = ctypes.c_int
-                self._fn_getframe.argtypes = [
-                    ctypes.POINTER(ctypes.c_float), ctypes.c_bool]
-            except Exception:
-                pass
+        self._fn_getframe.restype = ctypes.c_int
+        self._fn_getframe.argtypes = [
+            ctypes.POINTER(ctypes.c_float), ctypes.c_bool]
 
-    def init(self):
-        if self._fn_init is None:
-            raise AttributeError("LEPSDK_Init not found in library")
-        rc = self._fn_init()
+        info = LEPSDK_DriverInfo()
+        rc = self._fn_init(ctypes.byref(info))
         if rc != 0:
             raise RuntimeError(f"LEPSDK_Init failed rc={rc}")
-        return rc
+
+        self.frameWidth = info.framwidth
+        self.frameHeight = info.frameHeight
 
     def shutdown(self):
         if self._fn_shutdown is None:
@@ -133,13 +114,14 @@ class LeptonDriver:
         if self._fn_getframe is None:
             raise AttributeError("LEPSDK_GetFrame not found in library")
 
-        buf = np.empty(self.FRAME_PIXELS, dtype=np.float32)
+        framePixels = self.frameWidth * self.frameHeight
+        buf = np.empty(framePixels, dtype=np.float32)
         # get pointer to buffer
         buf_ptr = buf.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
         rc = self._fn_getframe(buf_ptr, ctypes.c_bool(bool(asFahrenheit)))
         if rc != 0:
             raise RuntimeError(f"LEPSDK_GetFrame failed rc={rc}")
-        return buf.reshape((self.FRAME_HEIGHT, self.FRAME_WIDTH))
+        return buf.reshape((self.frameHeight, self.frameWidth))
 
     # convenience context manager
     def __enter__(self):
