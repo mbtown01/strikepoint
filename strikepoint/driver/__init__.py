@@ -10,8 +10,8 @@ from io import FileIO
 def find_library_path(name_hint="libdriver.so"):
     """Search common locations for the SDK shared library; return path or None."""
     candidates = [
-        os.path.join(os.getcwd(), f"driver/Release/{name_hint}"),
-        os.path.join(os.getcwd(), f"driver/Debug/{name_hint}"),
+        os.path.join(os.getcwd(), f"strikepoint/driver/lib/Release/{name_hint}"),
+        os.path.join(os.getcwd(), f"strikepoint/driver/lib/Debug/{name_hint}"),
         f"/usr/local/lib/{name_hint}",
         f"/usr/lib/{name_hint}",
     ]
