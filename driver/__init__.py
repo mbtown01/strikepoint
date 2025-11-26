@@ -4,6 +4,7 @@ import ctypes
 import os
 import ctypes.util
 import numpy as np
+from io import FileIO
 
 
 def find_library_path(name_hint="libdriver.so"):
@@ -23,6 +24,31 @@ def find_library_path(name_hint="libdriver.so"):
         if p and os.path.exists(p):
             return p
     return None
+
+
+class LeptonDriverShim:
+
+    def __init__(self):
+        pass
+
+    def init(self):
+        # Read in all the binary data
+        with open("output.bin", "rb") as f:
+            self.data = np.fromfile(f, dtype=np.float32)
+            self.frameSize = 80*60
+            self.entries = len(self.data)//self.frameSize
+            self.count = int(0)
+
+        return 0
+
+    def shutdown(self):
+        return 0
+
+    def get_frame(self, asFahrenheit: bool):
+        frame = self.data[self.count *
+                          self.frameSize:(self.count+1)*self.frameSize]
+        self.count = (self.count + 1) % self.entries
+        return frame.reshape((60, 80))
 
 
 class LeptonDriver:

@@ -10,8 +10,8 @@ import dash
 from dash import html, dcc
 from dash.dependencies import Input, Output
 
-from driver import LeptonDriver
-# from lepton import Lepton
+from driver import LeptonDriver, LeptonDriverShim
+# from lepton import Lepton 
 
 
 class FrameProducer:
@@ -20,7 +20,11 @@ class FrameProducer:
     """
 
     def __init__(self, interval=0.1):
-        self.driver = LeptonDriver()
+        try:
+            self.driver = LeptonDriver()
+        except:
+            self.driver = LeptonDriverShim()
+
         self.interval = interval
         self.lock = threading.Lock()
         self.png_bytes = None
