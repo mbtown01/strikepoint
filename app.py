@@ -5,12 +5,14 @@ from flask import Response, stream_with_context
 from dash import Dash, html, dcc
 from dash.dependencies import Input, Output
 from strikepoint.producer import FrameProducer
+import dash_bootstrap_components as dbc
 
 
 class StrikePointDashApp:
 
     def __init__(self, interval=0.1):
-        self.app = Dash(__name__)
+        self.app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+
         self.server = self.app.server  # Flask server used for the stream route
         self.producer = FrameProducer(interval=interval)
         self.register_callbacks()
@@ -21,9 +23,30 @@ class StrikePointDashApp:
         def stream_mjpg_route():
             return self.stream_mjpg()
 
+        navbar = dbc.NavbarSimple(
+            children=[
+                dbc.NavItem(dbc.NavLink("Page 1", href="#")),
+                dbc.DropdownMenu(
+                    children=[
+                        dbc.DropdownMenuItem("More pages", header=True),
+                        dbc.DropdownMenuItem("Page 2", href="#"),
+                        dbc.DropdownMenuItem("Page 3", href="#"),
+                    ],
+                    nav=True,
+                    in_navbar=True,
+                    label="More",
+                ),
+            ],
+            brand="StrikePoint",
+            brand_href="#",
+            color="primary",
+            dark=True,
+        )
+
         # layout: keep MJPEG src static, update stats with dcc.Interval
         self.app.layout = html.Div(
             [
+                navbar,
                 html.H3("Lepton Live (thermal)"),
                 html.Img(id="frame", src="/stream.mjpg",
                          style={"width": "320", "height": "240"}),

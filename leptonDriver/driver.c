@@ -14,6 +14,9 @@
 #include "LEPTON_VID.h"
 #include "LEPTON_SYS.h"
 #include "LEPTON_OEM.h"
+#include "LEPTON_AGC.h"
+#include "LEPTON_RAD.h"
+
 
 #define PACKET_SIZE 4 + 2 * FRAME_WIDTH
 #define PACKETS_PER_FRAME FRAME_HEIGHT
@@ -101,10 +104,6 @@ int LEPSDK_InitI2C()
     printf("Camera Status: %d, Command Count: %d\n",
            statusDesc.camStatus, statusDesc.commandCount);
 
-    // LEP_POLARITY_E polarityDesc;
-    // LEP_ASSERT(LEP_GetVidPolarity(&_gblSession->portDesc, &polarityDesc));
-    // printf("Video Polarity: %d\n", polarityDesc);
-
     LEP_ASSERT_ZERO(LEP_RunSysFFCNormalization(&_gblSession->portDesc));
     usleep(500000); // Wait for a second to allow FFC to complete
 
@@ -112,6 +111,77 @@ int LEPSDK_InitI2C()
     // LEP_ASSERT(LEP_GetSysStatus(&_gblSession->portDesc, &statusDesc));
     // printf("Camera Status: %d, Command Count: %d\n",
     //        statusDesc.camStatus, statusDesc.commandCount);
+
+
+    LEP_RESULT res;
+    LEP_CAMERA_PORT_DESC_T port;
+
+    // Open the camera
+    res = LEP_OpenPort(1, LEP_CCI_TWI, 400, &port);
+    if(res != LEP_OK)
+    {
+        printf("Failed to open Lepton port\n");
+        return -1;
+    }
+
+    /***************************************************************************
+     * 1. DISABLE AGC  (critical for real temperature deltas)
+     ***************************************************************************/
+    LEP_ASSERT_ZERO(LEP_SetAgcEnableState(&port, LEP_AGC_DISABLE));
+
+    /***************************************************************************
+     * 2. ENABLE RADIOMETRY (ensures RAW14 has stable temperature relation)
+     ***************************************************************************/
+    LEP_ASSERT_ZERO(LEP_SetRadEnableState(&port, LEP_RAD_ENABLE));
+
+    /***************************************************************************
+     * 3. SET FFC MODE TO MANUAL
+     ***************************************************************************/
+    LEP_SYS_FFC_SHUTTER_MODE_OBJ_T ffcMode;
+
+    ffcMode.shutterMode = LEP_SYS_FFC_SHUTTER_MODE_MANUAL;
+    ffcMode.tempLockoutState = LEP_SYS_SHUTTER_LOCKOUT_INACTIVE;
+    // ffcMode.validShutterRegion = LEP_SYS_VALID_SHUTTER_REGION;
+    LEP_ASSERT_ZERO(LEP_SetSysFfcShutterModeObj(&port, ffcMode));
+
+    /***************************************************************************
+     * 4. INITIAL FFC NORMALIZATION (do this once after warm-up)
+     ***************************************************************************/
+    LEP_ASSERT_ZERO(LEP_RunSysFFCNormalization(&port));
+
+    /***************************************************************************
+     * 5. SET HIGH GAIN MODE  (best for detecting small ∆T)
+     ***************************************************************************/
+    // LEP_ASSERT_ZERO(LEP_SetSysGainMode(&port, LEP_SYS_GAIN_MODE_HIGH));
+
+    /***************************************************************************
+     * 6. ENABLE TELEMETRY (helps normalize data per frame)
+     ***************************************************************************/
+    LEP_ASSERT_ZERO(LEP_SetOemVideoOutputEnable(&port, LEP_OEM_ENABLE));
+
+    // LEP_OEM_THERMAL_SHUTDOWN_ENABLE_T thermalShutdownEnable;
+    // thermalShutdownEnable.oemThermalShutdownEnable = LEP_OEM_ENABLE;
+    // LEP_ASSERT_ZERO(LEP_SetOemThermalShutdownEnable(&port, thermalShutdownEnable));
+    // LEP_ASSERT_ZERO(LEP_SetOemTelemetryEnableState(&port, LEP_OEM_ENABLE));
+
+    /***************************************************************************
+     * 7. VERIFY SETTINGS
+     ***************************************************************************/
+    LEP_RAD_ENABLE_E radState;
+    LEP_AGC_ENABLE_E agcState;
+
+    LEP_GetRadEnableState(&port, &radState);
+    LEP_GetAgcEnableState(&port, &agcState);
+
+    printf("Radiometry enabled: %d\n", radState);
+    printf("AGC enabled: %d\n", agcState);
+
+    /***************************************************************************
+     * Camera is now configured for optimal small-delta detection
+     ***************************************************************************/
+
+    LEP_ClosePort(&port);
+        
 
     return 0;
 }
@@ -157,7 +227,7 @@ int LEPSDK_GetFrame(float *frameBuffer, bool asFahrenheit)
     {
         int tries = 1000;
         read(_gblSession->spiFd, buff[0], PACKET_SIZE);
-        for (; buff[0][0] & 0x0F != 0 && buff[0][1] != 0 && tries > 0; tries--)
+        for (; (buff[0][0] & 0x0F) != 0 && buff[0][1] != 0 && tries > 0; tries--)
         {
             usleep(1000);
             read(_gblSession->spiFd, buff[0], PACKET_SIZE);
@@ -176,7 +246,7 @@ int LEPSDK_GetFrame(float *frameBuffer, bool asFahrenheit)
 
         if (goodPackets != PACKETS_PER_FRAME)
         {
-            printf("[REBOOT]");
+            printf("[REBOOT] only received %d good packets\n", goodPackets);
             LEPSDK_CloseSpi();
             LEP_ASSERT_ZERO(LEP_RunOemReboot(&(_gblSession->portDesc)));
             usleep(750000);

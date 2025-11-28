@@ -17,19 +17,19 @@ OBJ := $(shell for i in *.c; do echo $(OUTDIR)/$${i%.c}.o; done)
 
 # Pattern rules
 $(OUTDIR)/%.o : %.c
-	gcc -fpermissive -Dlinux=1 -fPIC -c  -v  $(CCARGS) -o "$(OUTDIR)/$(*F).o" "$<"
+	gcc -Dlinux=1 -fPIC -c  -v  $(CCARGS) -o "$(OUTDIR)/$(*F).o" "$<"
 
 # Build rules
-all: $(OUTDIR)/$(NAME).a $(OUTDIR)/$(NAME).so $(OUTDIR)/demo
+all: $(OUTDIR)/$(NAME).a $(OUTDIR)/$(NAME).so $(OUTDIR)/capture
 
-$(OUTDIR)/$(NAME).a: $(OUTDIR)  $(OBJ)
+$(OUTDIR)/$(NAME).a: $(OUTDIR) $(OBJ)
 	ar -rs  "$@" $(OBJ)
 
-$(OUTDIR)/$(NAME).so: $(OUTDIR)  $(OBJ)
+$(OUTDIR)/$(NAME).so: $(OUTDIR) $(OBJ)
 	gcc -shared -Wl,-soname,$(NAME).so -o "$@" $(OBJ)
 
-$(OUTDIR)/demo: $(OUTDIR) $(OUTDIR)/demo.o $(OUTDIR)/$(NAME).a
-	gcc -o "$@" "$(OUTDIR)/demo.o" $(OUTDIR)/$(NAME).a -lpthread -lm -ldl
+$(OUTDIR)/capture: $(OUTDIR) $(OUTDIR)/capture.o $(OUTDIR)/$(NAME).a
+	gcc -o "$@" "$(OUTDIR)/capture.o" $(OUTDIR)/$(NAME).a -lpthread -lm -ldl
 
 $(OUTDIR):
 	mkdir -p "$(OUTDIR)"
