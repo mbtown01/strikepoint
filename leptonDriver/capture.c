@@ -69,7 +69,7 @@ int main(int argc, char *argv[])
     }
 
     LEPSDK_DriverInfo driverInfo;
-    LEPSDK_Init(&driverInfo);
+    LEPSDK_SessionHandle hndl = LEPSDK_Init(&driverInfo);
     const int frameSize = driverInfo.frameHeight * driverInfo.frameWidth;
     float *buffer = (float *)malloc(frameSize);
 
@@ -77,13 +77,13 @@ int main(int argc, char *argv[])
     if (fd < 0)
     {
         perror("open(output.bin)");
-        LEPSDK_Shutdown();
+        LEPSDK_Shutdown(hndl);
         exit(1);
     }
 
     for (int i = 0; i < frames; i++)
     {
-        if (0 != LEPSDK_GetFrame(buffer, true))
+        if (0 != LEPSDK_GetFrame(hndl, buffer, true))
         {
             fprintf(stderr, "Error capturing frame %d\n", i);
             break;
@@ -100,7 +100,7 @@ int main(int argc, char *argv[])
     }
 
     close(fd);
-    LEPSDK_Shutdown();
+    LEPSDK_Shutdown(hndl);
 
     return 0;
 }

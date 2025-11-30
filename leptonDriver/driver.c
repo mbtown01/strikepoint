@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <memory.h>
+#include <errno.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <fcntl.h>
@@ -17,7 +18,39 @@
 #include "LEPTON_AGC.h"
 #include "LEPTON_RAD.h"
 
+#define ERROR(msg)                                               \
+    do                                                           \
+    {                                                            \
+        printf("ERROR at %s:%d: %s\n", __FILE__, __LINE__, msg); \
+        return -1;                                               \
+    } while (0)
 
+#define ASSERT_CALL_LEP(cmd)                                     \
+    do                                                           \
+    {                                                            \
+        LEP_RESULT rtn = cmd;                                    \
+        if (rtn != LEP_OK)                                       \
+        {                                                        \
+            printf("ERROR at %s:%d: Call to '%s' returned %d\n", \
+                   __FILE__, __LINE__, #cmd, rtn);               \
+            return rtn;                                          \
+        }                                                        \
+    } while (0)
+
+#define ASSERT_CALL_IO(cmd)                                          \
+    do                                                               \
+    {                                                                \
+        int rtn = cmd;                                               \
+        if (rtn < 0)                                                 \
+        {                                                            \
+            printf("ERROR at %s:%d: Call to '%s' returned %d: %s\n", \
+                   __FILE__, __LINE__, #cmd, rtn, strerror(errno));  \
+            return rtn;                                              \
+        }                                                            \
+    } while (0)
+
+#define FRAME_WIDTH 80
+#define FRAME_HEIGHT 60
 #define PACKET_SIZE 4 + 2 * FRAME_WIDTH
 #define PACKETS_PER_FRAME FRAME_HEIGHT
 
@@ -28,141 +61,90 @@ typedef struct
     unsigned char spiBitsPerWord;
     unsigned int spiSpeed;
     int spiFd;
-} LEPSDK_SessionInfo;
+} LEPSDK_Session;
 
-LEPSDK_SessionInfo *_gblSession = NULL;
-char _glbErrorMsg[4096] = {0};
 
-int LEPSDK_InitSpi()
+int _initSpi(LEPSDK_Session *session)
 {
-    if (_gblSession != NULL)
-        LEP_ERROR("SDK already initialized");
-
     int rtn;
-    LEPSDK_SessionInfo session;
-    session.spiMode = SPI_MODE_3;
-    session.spiBitsPerWord = 8;
-    session.spiSpeed = 10000000;
-    session.spiFd = open("/dev/spidev0.0", O_RDWR);
-    if (session.spiFd < 0)
-        LEP_ERROR("Error - Could not open SPI device");
+    session->spiMode = SPI_MODE_3;
+    session->spiBitsPerWord = 8;
+    session->spiSpeed = 10000000;
+    session->spiFd = open("/dev/spidev0.0", O_RDWR);
+    if (session->spiFd < 0)
+        ERROR("Error - Could not open SPI device");
 
-    rtn = ioctl(session.spiFd, SPI_IOC_WR_MODE, &session.spiMode);
-    if (rtn < 0)
-        LEP_ERROR("Could not set SPIMode (WR)...ioctl fail");
+    ASSERT_CALL_IO(ioctl(
+        session->spiFd, SPI_IOC_WR_MODE, &session->spiMode));
+    ASSERT_CALL_IO(ioctl(
+        session->spiFd, SPI_IOC_RD_MODE, &session->spiMode));
+    ASSERT_CALL_IO(ioctl(
+        session->spiFd, SPI_IOC_WR_BITS_PER_WORD, &session->spiBitsPerWord));
+    ASSERT_CALL_IO(ioctl(
+        session->spiFd, SPI_IOC_RD_BITS_PER_WORD, &session->spiBitsPerWord));
+    ASSERT_CALL_IO(ioctl(
+        session->spiFd, SPI_IOC_WR_MAX_SPEED_HZ, &session->spiSpeed));
+    ASSERT_CALL_IO(ioctl(
+        session->spiFd, SPI_IOC_RD_MAX_SPEED_HZ, &session->spiSpeed));
 
-    rtn = ioctl(session.spiFd, SPI_IOC_RD_MODE, &session.spiMode);
-    if (rtn < 0)
-        LEP_ERROR("Could not set SPIMode (RD)...ioctl fail");
-
-    rtn = ioctl(session.spiFd, SPI_IOC_WR_BITS_PER_WORD, &session.spiBitsPerWord);
-    if (rtn < 0)
-        LEP_ERROR("Could not set SPI bitsPerWord (WR)...ioctl fail");
-
-    rtn = ioctl(session.spiFd, SPI_IOC_RD_BITS_PER_WORD, &session.spiBitsPerWord);
-    if (rtn < 0)
-        LEP_ERROR("Could not set SPI bitsPerWord (RD)...ioctl fail");
-
-    rtn = ioctl(session.spiFd, SPI_IOC_WR_MAX_SPEED_HZ, &session.spiSpeed);
-    if (rtn < 0)
-        LEP_ERROR("Could not set SPI speed (WR)...ioctl fail");
-
-    rtn = ioctl(session.spiFd, SPI_IOC_RD_MAX_SPEED_HZ, &session.spiSpeed);
-    if (rtn < 0)
-        LEP_ERROR("Could not set SPI speed (RD)...ioctl fail");
-
-    _gblSession = (LEPSDK_SessionInfo *)malloc(sizeof(LEPSDK_SessionInfo));
-    memcpy(_gblSession, &session, sizeof(LEPSDK_SessionInfo));
     return (0);
 }
 
-int LEPSDK_CloseSpi()
+int _closeSpi(LEPSDK_Session *session)
 {
-    if (_gblSession == NULL)
-        LEP_ERROR("SDK not initialized");
-
-    int rtn = close(_gblSession->spiFd);
+    int rtn = close(session->spiFd);
     if (rtn < 0)
-        LEP_ERROR("Error - Could not close SPI device");
+        ERROR("Error - Could not close SPI device");
 
     return (0);
 }
 
-int LEPSDK_InitI2C()
+int _initI2C(LEPSDK_Session *session)
 {
     LEP_STATUS_T statusDesc;
 
     // Initialize and open the camera port (example values)
-    _gblSession->portDesc.portType = LEP_CCI_TWI;
-    _gblSession->portDesc.portID = 99;
-    _gblSession->portDesc.deviceAddress = 0x2A;              // Example I2C address
-    _gblSession->portDesc.portBaudRate = (LEP_UINT16)400000; // 400 kHz
-    LEP_ASSERT_ZERO(LEP_OpenPort(1, LEP_CCI_TWI, 400, &_gblSession->portDesc));
+    session->portDesc.portType = LEP_CCI_TWI;
+    session->portDesc.portID = 99;
+    session->portDesc.deviceAddress = 0x2A;              // Example I2C address
+    session->portDesc.portBaudRate = (LEP_UINT16)400000; // 400 kHz
+    ASSERT_CALL_LEP(LEP_OpenPort(1, LEP_CCI_TWI, 400, &session->portDesc));
 
     // Check the system status
-    LEP_ASSERT_ZERO(LEP_GetSysStatus(&_gblSession->portDesc, &statusDesc));
-    printf("Camera Status: %d, Command Count: %d\n",
-           statusDesc.camStatus, statusDesc.commandCount);
-
-    LEP_ASSERT_ZERO(LEP_RunSysFFCNormalization(&_gblSession->portDesc));
-    usleep(500000); // Wait for a second to allow FFC to complete
-
-    // // Check the system status
-    // LEP_ASSERT(LEP_GetSysStatus(&_gblSession->portDesc, &statusDesc));
-    // printf("Camera Status: %d, Command Count: %d\n",
-    //        statusDesc.camStatus, statusDesc.commandCount);
-
-
-    LEP_RESULT res;
-    LEP_CAMERA_PORT_DESC_T port;
-
-    // Open the camera
-    res = LEP_OpenPort(1, LEP_CCI_TWI, 400, &port);
-    if(res != LEP_OK)
-    {
-        printf("Failed to open Lepton port\n");
-        return -1;
-    }
+    ASSERT_CALL_LEP(LEP_GetSysStatus(&session->portDesc, &statusDesc));
 
     /***************************************************************************
      * 1. DISABLE AGC  (critical for real temperature deltas)
      ***************************************************************************/
-    LEP_ASSERT_ZERO(LEP_SetAgcEnableState(&port, LEP_AGC_DISABLE));
+    ASSERT_CALL_LEP(LEP_SetAgcEnableState(&session->portDesc, LEP_AGC_DISABLE));
 
     /***************************************************************************
      * 2. ENABLE RADIOMETRY (ensures RAW14 has stable temperature relation)
      ***************************************************************************/
-    LEP_ASSERT_ZERO(LEP_SetRadEnableState(&port, LEP_RAD_ENABLE));
+    ASSERT_CALL_LEP(LEP_SetRadEnableState(&session->portDesc, LEP_RAD_ENABLE));
 
     /***************************************************************************
      * 3. SET FFC MODE TO MANUAL
      ***************************************************************************/
     LEP_SYS_FFC_SHUTTER_MODE_OBJ_T ffcMode;
-
     ffcMode.shutterMode = LEP_SYS_FFC_SHUTTER_MODE_MANUAL;
     ffcMode.tempLockoutState = LEP_SYS_SHUTTER_LOCKOUT_INACTIVE;
-    // ffcMode.validShutterRegion = LEP_SYS_VALID_SHUTTER_REGION;
-    LEP_ASSERT_ZERO(LEP_SetSysFfcShutterModeObj(&port, ffcMode));
+    ASSERT_CALL_LEP(LEP_SetSysFfcShutterModeObj(&session->portDesc, ffcMode));
 
     /***************************************************************************
      * 4. INITIAL FFC NORMALIZATION (do this once after warm-up)
      ***************************************************************************/
-    LEP_ASSERT_ZERO(LEP_RunSysFFCNormalization(&port));
-
-    /***************************************************************************
-     * 5. SET HIGH GAIN MODE  (best for detecting small ∆T)
-     ***************************************************************************/
-    // LEP_ASSERT_ZERO(LEP_SetSysGainMode(&port, LEP_SYS_GAIN_MODE_HIGH));
+    ASSERT_CALL_LEP(LEP_RunSysFFCNormalization(&session->portDesc));
 
     /***************************************************************************
      * 6. ENABLE TELEMETRY (helps normalize data per frame)
      ***************************************************************************/
-    LEP_ASSERT_ZERO(LEP_SetOemVideoOutputEnable(&port, LEP_OEM_ENABLE));
+    ASSERT_CALL_LEP(LEP_SetOemVideoOutputEnable(&session->portDesc, LEP_OEM_ENABLE));
 
     // LEP_OEM_THERMAL_SHUTDOWN_ENABLE_T thermalShutdownEnable;
     // thermalShutdownEnable.oemThermalShutdownEnable = LEP_OEM_ENABLE;
-    // LEP_ASSERT_ZERO(LEP_SetOemThermalShutdownEnable(&port, thermalShutdownEnable));
-    // LEP_ASSERT_ZERO(LEP_SetOemTelemetryEnableState(&port, LEP_OEM_ENABLE));
+    // ASSERT_CALL_LEP(LEP_SetOemThermalShutdownEnable(&port, thermalShutdownEnable));
+    // ASSERT_CALL_LEP(LEP_SetOemTelemetryEnableState(&port, LEP_OEM_ENABLE));
 
     /***************************************************************************
      * 7. VERIFY SETTINGS
@@ -170,9 +152,14 @@ int LEPSDK_InitI2C()
     LEP_RAD_ENABLE_E radState;
     LEP_AGC_ENABLE_E agcState;
 
-    LEP_GetRadEnableState(&port, &radState);
-    LEP_GetAgcEnableState(&port, &agcState);
+    usleep(200000); // Wait for a second to allow FFC to complete
 
+    LEP_GetRadEnableState(&session->portDesc, &radState);
+    LEP_GetAgcEnableState(&session->portDesc, &agcState);
+    ASSERT_CALL_LEP(LEP_GetSysStatus(&session->portDesc, &statusDesc));
+
+    printf("Camera status: %d\n", statusDesc.camStatus);
+    printf("Command count: %d\n", statusDesc.commandCount);
     printf("Radiometry enabled: %d\n", radState);
     printf("AGC enabled: %d\n", agcState);
 
@@ -180,65 +167,67 @@ int LEPSDK_InitI2C()
      * Camera is now configured for optimal small-delta detection
      ***************************************************************************/
 
-    LEP_ClosePort(&port);
-        
-
     return 0;
 }
 
-int LEPSDK_CloseI2C()
+int _closeI2C(LEPSDK_Session *session)
 {
-    if (_gblSession == NULL)
-        LEP_ERROR("SDK not initialized");
+    if (session == NULL)
+        ERROR("SDK not initialized");
 
     // Close the camera port
-    LEP_ASSERT_ZERO(LEP_ClosePort(&_gblSession->portDesc));
+    ASSERT_CALL_LEP(LEP_ClosePort(&session->portDesc));
 
     return (0);
 }
 
-int LEPSDK_Init(LEPSDK_DriverInfo *info)
+LEPSDK_SessionHandle LEPSDK_Init(LEPSDK_DriverInfo *info)
 {
     if (NULL == info)
-        LEP_ERROR("Invalid argument: info is NULL");
+        return NULL;
 
-    if (0 != LEPSDK_InitSpi())
-        return -1;
-
-    if (0 != LEPSDK_InitI2C())
-        return -1;
+    LEPSDK_Session localSession;
+    if (0 != _initSpi(&localSession))
+        return NULL;
+    if (0 != _initI2C(&localSession))
+        return NULL;
 
     info->versionMajor = 1;
     info->versionMinor = 0;
-    info->frameWidth = FRAME_WIDTH; 
-    info->frameHeight = FRAME_HEIGHT;  
+    info->frameWidth = FRAME_WIDTH;
+    info->frameHeight = FRAME_HEIGHT;
 
-    return (0);
+    LEPSDK_Session *session = (LEPSDK_Session *)malloc(sizeof(LEPSDK_Session));
+    memcpy(session, &localSession, sizeof(LEPSDK_Session));
+    return session;
 }
 
-int LEPSDK_GetFrame(float *frameBuffer, bool asFahrenheit)
+int LEPSDK_GetFrame(
+    LEPSDK_SessionHandle hndl, float *frameBuffer, bool asFahrenheit)
 {
-    if (_gblSession == NULL)
-        LEP_ERROR("SDK not initialized");
+    if (hndl == NULL)
+        ERROR("SDK not initialized");
+    LEPSDK_Session *session = (LEPSDK_Session *)hndl;
 
     uint8_t buff[PACKETS_PER_FRAME][PACKET_SIZE];
+    int failedAttemptCount = 0;
 
-    for (int attempt = 0; attempt < 30; attempt)
+    while (failedAttemptCount < 30)
     {
         int tries = 1000;
-        read(_gblSession->spiFd, buff[0], PACKET_SIZE);
+        read(session->spiFd, buff[0], PACKET_SIZE);
         for (; (buff[0][0] & 0x0F) != 0 && buff[0][1] != 0 && tries > 0; tries--)
         {
             usleep(1000);
-            read(_gblSession->spiFd, buff[0], PACKET_SIZE);
+            read(session->spiFd, buff[0], PACKET_SIZE);
         }
         if (tries == 0)
-            LEP_ERROR("Could not sync to packet start");
+            ERROR("Could not sync to packet start");
 
         int goodPackets = 1;
         for (int p = 1; p < PACKETS_PER_FRAME; p++)
         {
-            read(_gblSession->spiFd, buff[p], PACKET_SIZE);
+            read(session->spiFd, buff[p], PACKET_SIZE);
             if (buff[p][0] & 0x0F != 0 || buff[p][1] != p)
                 break;
             goodPackets++;
@@ -246,14 +235,16 @@ int LEPSDK_GetFrame(float *frameBuffer, bool asFahrenheit)
 
         if (goodPackets != PACKETS_PER_FRAME)
         {
-            printf("[REBOOT] only received %d good packets\n", goodPackets);
-            LEPSDK_CloseSpi();
-            LEP_ASSERT_ZERO(LEP_RunOemReboot(&(_gblSession->portDesc)));
+            printf("[WAIT] only received %d good packets\n", goodPackets);
+            // _closeSpi(session);
+            // ASSERT_CALL_LEP(LEP_RunOemReboot(&(session->portDesc)));
             usleep(750000);
-            LEPSDK_InitSpi();
+            ++failedAttemptCount;
+            // _initSpi(session);
             continue;
         }
 
+        failedAttemptCount = 0;
         for (int i = 0; i < FRAME_WIDTH * FRAME_HEIGHT; i++)
         {
             int r = i / FRAME_WIDTH, c = i % FRAME_WIDTH;
@@ -266,18 +257,17 @@ int LEPSDK_GetFrame(float *frameBuffer, bool asFahrenheit)
         return 0;
     }
 
-    LEP_ERROR("Could not read frame after multiple attempts");
+    ERROR("Could not read frame after multiple attempts");
 }
 
-int LEPSDK_Shutdown()
+int LEPSDK_Shutdown(LEPSDK_SessionHandle hndl)
 {
-    if (_gblSession == NULL)
-        LEP_ERROR("SDK not initialized");
+    if (hndl == NULL)
+        ERROR("SDK not initialized");
+    LEPSDK_Session *session = (LEPSDK_Session *)hndl;    
 
-    LEPSDK_CloseSpi();
-    LEPSDK_CloseI2C();
-
-    free(_gblSession);
-    _gblSession = NULL;
+    _closeSpi(session);
+    _closeI2C(session);
+    free(session);
     return (0);
 }

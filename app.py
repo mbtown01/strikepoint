@@ -1,5 +1,7 @@
 import time
 import atexit
+import cv2
+import numpy as np
 
 from flask import Response, stream_with_context
 from dash import Dash, html, dcc
@@ -70,28 +72,46 @@ class StrikePointDashApp:
         atexit.register(self.shutdown)
 
     def update_stats(self, n):
-        frameInfo = self.producer.getLatestFrameInfo()
-        if frameInfo is None:
+        frame = self.producer.getLatestFrame()
+        if frame is None:
             return "No frame yet"
-        return f"Min: {frameInfo.minValue:.1f} °F   Max: {frameInfo.maxValue:.1f} °F"
+        return f"Min: {frame.min():.1f} °F   Max: {frame.max():.1f} °F"
 
     # register MJPEG stream endpoint using a closure so it captures self.producer
     def stream_mjpg(self):
+
         def gen():
             while True:
-                frameInfo = self.producer.getLatestFrameInfo()
-                if frameInfo is None:
-                    time.sleep(0.05)
-                    continue
-                part = (
-                    b"--frame\r\n"
-                    + b"Content-Type: image/png\r\n"
-                    + b"Content-Length: " +
-                    str(len(frameInfo.pngBytes)).encode() + b"\r\n\r\n"
-                    + frameInfo.pngBytes + b"\r\n"
-                )
-                yield part
-                time.sleep(self.producer.interval)
+                try:
+                    frame = self.producer.getLatestFrame()
+                    if frame is None:
+                        time.sleep(0.05)
+                        continue
+
+                    frame = cv2.normalize(
+                        frame, None, 50, 200, cv2.NORM_MINMAX).astype(np.uint8)
+                    frame = cv2.applyColorMap(frame, cv2.COLORMAP_HOT)
+
+                    ok, buf = cv2.imencode('.png', frame)
+                    if not ok:
+                        raise RuntimeError("Could not encode frame to PNG")
+
+                    part = (
+                        b"--frame\r\n"
+                        + b"Content-Type: image/png\r\n"
+                        + b"Content-Length: " +
+                        str(len(buf)).encode() + b"\r\n\r\n" +
+                        buf.tobytes() + b"\r\n"
+                    )
+                    yield part
+                    time.sleep(self.producer.interval)
+                except GeneratorExit:
+                    break
+                except Exception as ex:
+                    # log and keep trying; prevents the stream from dying silently
+                    print("stream_mjpg exception:", ex)
+                    time.sleep(0.5)
+
         return Response(stream_with_context(gen()),
                         mimetype="multipart/x-mixed-replace; boundary=frame")
 
@@ -100,7 +120,6 @@ class StrikePointDashApp:
             self.producer.stop()
         except Exception:
             pass
-
     def run(self, host="0.0.0.0", port=8050, debug=False, threaded=True):
         # threaded=True helps keep the MJPEG stream and Dash callbacks responsive
         self.app.run(host=host, port=port, debug=debug, threaded=threaded)

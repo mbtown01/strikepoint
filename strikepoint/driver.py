@@ -77,22 +77,22 @@ class LeptonDriver:
 
         lib = ctypes.CDLL(libPath)
         self._fn_init = getattr(lib, "LEPSDK_Init", None)
-        self._fn_init.restype = ctypes.c_int
+        self._fn_init.restype = ctypes.c_void_p
 
         # LEPSDK_Shutdown -> int LEPSDK_Shutdown(void)
         self._fn_shutdown = getattr(lib, "LEPSDK_Shutdown", None)
         self._fn_shutdown.restype = ctypes.c_int
-        self._fn_shutdown.argtypes = []
+        self._fn_shutdown.argtypes = [ctypes.c_void_p]
 
         # LEPSDK_GetFrame -> int LEPSDK_GetFrame(float* buffer, bool asFahrenheit)
         self._fn_getframe = getattr(lib, "LEPSDK_GetFrame", None)
         self._fn_getframe.restype = ctypes.c_int
         self._fn_getframe.argtypes = [
-            ctypes.POINTER(ctypes.c_float), ctypes.c_bool]
+            ctypes.c_void_p, ctypes.POINTER(ctypes.c_float), ctypes.c_bool]
 
         info = LEPSDK_DriverInfo()
-        rc = self._fn_init(ctypes.byref(info))
-        if rc != 0:
+        self.hndl = self._fn_init(ctypes.byref(info))
+        if self.hndl == 0:
             raise RuntimeError(f"LEPSDK_Init failed rc={rc}")
 
         self.frameWidth = info.framwidth
@@ -101,7 +101,7 @@ class LeptonDriver:
     def shutdown(self):
         if self._fn_shutdown is None:
             raise AttributeError("LEPSDK_Shutdown not found in library")
-        rc = self._fn_shutdown()
+        rc = self._fn_shutdown(self.hndl)
         if rc != 0:
             raise RuntimeError(f"LEPSDK_Shutdown failed rc={rc}")
         return rc
@@ -118,14 +118,14 @@ class LeptonDriver:
         buf = np.empty(framePixels, dtype=np.float32)
         # get pointer to buffer
         buf_ptr = buf.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
-        rc = self._fn_getframe(buf_ptr, ctypes.c_bool(bool(asFahrenheit)))
+        rc = self._fn_getframe(
+            self.hndl, buf_ptr, ctypes.c_bool(bool(asFahrenheit)))
         if rc != 0:
             raise RuntimeError(f"LEPSDK_GetFrame failed rc={rc}")
         return buf.reshape((self.frameHeight, self.frameWidth))
 
     # convenience context manager
     def __enter__(self):
-        self.init()
         return self
 
     def __exit__(self, exc_type, exc, tb):
