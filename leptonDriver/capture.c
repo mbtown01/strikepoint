@@ -1,9 +1,14 @@
+#ifndef CLOCK_MONOTONIC
+#define CLOCK_MONOTONIC 1
+#endif
+
 #include "driver.h"
 #include <stdio.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <fcntl.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 #include <getopt.h>
 #include <stdbool.h>
@@ -18,20 +23,27 @@ static void usage(const char *prog)
 {
     fprintf(stderr, "Usage: %s [--frames N] [-f N] [--output FILE] [-o FILE]\n", prog);
     fprintf(stderr, "  --frames N, -f N         Number of frames to capture (default 256)\n");
-    fprintf(stderr, "  --delay N, -d N          Microseconds of delay between captures (default 100000)\n");
+    fprintf(stderr, "  --fps N, -d N            Frame per second to capture (default 9)\n");
     fprintf(stderr, "  --output FILE, -o FILE   Output filename (default \"output.bin\")\n");
     exit(1);
 }
 
+double get_time_sec()
+{
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return now.tv_sec + now.tv_nsec / 1e9;
+}
+
 int main(int argc, char *argv[])
 {
-    int frames = 256;                   // default
-    int delay = 100000;                 // default
-    const char *outfile = "output.bin"; // default
+    int frames = 256;
+    int fps = 9;
+    const char *outfile = "output.bin";
 
     static struct option long_options[] = {
         {"frames", required_argument, 0, 'f'},
-        {"delay", required_argument, 0, 'd'},
+        {"fps", required_argument, 0, 'p'},
         {"output", required_argument, 0, 'o'},
         {"help", no_argument, 0, 'h'},
         {0, 0, 0, 0}};
@@ -49,11 +61,11 @@ int main(int argc, char *argv[])
                 fprintf(stderr, "Invalid frames value: %s\n", optarg);
             break;
         }
-        case 'd':
+        case 'p':
         {
-            delay = strtol(optarg, &endptr, 10);
-            if (endptr == optarg || *endptr != '\0' || delay <= 0)
-                fprintf(stderr, "Invalid delay value: %s\n", optarg);
+            fps = strtol(optarg, &endptr, 10);
+            if (endptr == optarg || *endptr != '\0' || fps <= 0)
+                fprintf(stderr, "Invalid fps value: %s\n", optarg);
             break;
         }
         case 'o':
@@ -83,6 +95,7 @@ int main(int argc, char *argv[])
 
     for (int i = 0; i < frames; i++)
     {
+        double start = get_time_sec();
         if (0 != LEPSDK_GetFrame(hndl, buffer, true))
         {
             fprintf(stderr, "Error capturing frame %d\n", i);
@@ -95,8 +108,12 @@ int main(int argc, char *argv[])
             fprintf(stderr, "Error writing frame %d: %s\n", i, strerror(errno));
             break;
         }
-        printf("Frame %d\n", i);
-        usleep(delay);
+
+        double elapsed = get_time_sec() - start;
+        double delay = (1.0 / fps) - elapsed;
+        printf("Frame %d elapsed=%lf delay=%lf\n", i, elapsed, delay);
+        if (delay > 0)
+            usleep(delay * 1e6);
     }
 
     close(fd);

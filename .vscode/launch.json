@@ -12,6 +12,13 @@
             "console": "internalConsole"
         },
         {
+            "name": "Flask Video Producer",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "strikepoint.producer",
+            "console": "internalConsole"
+        },
+        {
             "name": "Debug demo.c",
             "type": "cppdbg",
             "request": "launch",

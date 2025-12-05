@@ -10,6 +10,7 @@
 #include <linux/spi/spidev.h>
 
 #include "driver.h"
+#include "crc16.h"
 #include "LEPTON_SDK.h"
 #include "LEPTON_ErrorCodes.h"
 #include "LEPTON_VID.h"
@@ -62,7 +63,6 @@ typedef struct
     unsigned int spiSpeed;
     int spiFd;
 } LEPSDK_Session;
-
 
 int _initSpi(LEPSDK_Session *session)
 {
@@ -214,23 +214,25 @@ int LEPSDK_GetFrame(
 
     while (failedAttemptCount < 30)
     {
-        int tries = 1000;
+        int tries = 10000;
         read(session->spiFd, buff[0], PACKET_SIZE);
         for (; (buff[0][0] & 0x0F) != 0 && buff[0][1] != 0 && tries > 0; tries--)
-        {
-            usleep(1000);
             read(session->spiFd, buff[0], PACKET_SIZE);
-        }
         if (tries == 0)
             ERROR("Could not sync to packet start");
 
+        // printf("[HDR] %02x %02x %02x %02x\n",
+        //        buff[0][0], buff[0][1], buff[0][3], buff[0][3]);
         int goodPackets = 1;
-        for (int p = 1; p < PACKETS_PER_FRAME; p++)
+        for (int p = 1; p < PACKETS_PER_FRAME; p++, goodPackets++)
         {
             read(session->spiFd, buff[p], PACKET_SIZE);
             if (buff[p][0] & 0x0F != 0 || buff[p][1] != p)
+            {
+                printf("[BAD] %02x %02x %02x %02x\n",
+                       buff[0][0], buff[0][1], buff[0][3], buff[0][3]);
                 break;
-            goodPackets++;
+            }
         }
 
         if (goodPackets != PACKETS_PER_FRAME)
@@ -238,9 +240,8 @@ int LEPSDK_GetFrame(
             printf("[WAIT] only received %d good packets\n", goodPackets);
             // _closeSpi(session);
             // ASSERT_CALL_LEP(LEP_RunOemReboot(&(session->portDesc)));
-            usleep(750000);
+            usleep(50000);
             ++failedAttemptCount;
-            // _initSpi(session);
             continue;
         }
 
@@ -264,7 +265,7 @@ int LEPSDK_Shutdown(LEPSDK_SessionHandle hndl)
 {
     if (hndl == NULL)
         ERROR("SDK not initialized");
-    LEPSDK_Session *session = (LEPSDK_Session *)hndl;    
+    LEPSDK_Session *session = (LEPSDK_Session *)hndl;
 
     _closeSpi(session);
     _closeI2C(session);

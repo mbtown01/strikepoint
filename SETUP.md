@@ -9,6 +9,8 @@ sudo apt-get install libgtk2.0-dev pkg-config
 
 ## Resource links
 
+https://flir.netx.net/file/asset/13333/original/attachment
+
 ### Sparkfun setup and initial project
 https://learn.sparkfun.com/tutorials/flir-lepton-hookup-guide/all
 https://cdn.sparkfun.com/assets/8/0/d/b/3/DS-16912-FLiR_Lepton_-_Breakout_Board_V2.pdf

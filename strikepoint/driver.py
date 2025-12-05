@@ -36,28 +36,6 @@ def find_library_path(name_hint="libleptonDriver.so"):
     return None
 
 
-class LeptonDriverShim:
-
-    def __init__(self):
-        # Read in all the binary data
-        with open("output.bin", "rb") as f:
-            self.data = np.fromfile(f, dtype=np.float32)
-            self.frameSize = 80*60
-            self.entries = len(self.data)//self.frameSize
-            self.count = int(0)
-
-        return 0
-
-    def shutdown(self):
-        return 0
-
-    def get_frame(self, asFahrenheit: bool):
-        frame = self.data[self.count *
-                          self.frameSize:(self.count+1)*self.frameSize]
-        self.count = (self.count + 1) % self.entries
-        return frame.reshape((60, 80))
-
-
 class LeptonDriver:
     """ctypes wrapper around LEPSDK_* functions from the C driver.
 
@@ -93,7 +71,7 @@ class LeptonDriver:
         info = LEPSDK_DriverInfo()
         self.hndl = self._fn_init(ctypes.byref(info))
         if self.hndl == 0:
-            raise RuntimeError(f"LEPSDK_Init failed rc={rc}")
+            raise RuntimeError(f"LEPSDK_Init failed")
 
         self.frameWidth = info.framwidth
         self.frameHeight = info.frameHeight
@@ -106,7 +84,7 @@ class LeptonDriver:
             raise RuntimeError(f"LEPSDK_Shutdown failed rc={rc}")
         return rc
 
-    def get_frame(self, asFahrenheit=True, timeout_s=None):
+    def getFrame(self, asFahrenheit=True, timeout_s=None):
         """Capture one frame into a numpy float32 array (shape 60x80).
 
         Returns numpy.ndarray dtype float32 shaped (FRAME_HEIGHT, FRAME_WIDTH).
