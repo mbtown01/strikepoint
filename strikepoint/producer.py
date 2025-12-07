@@ -160,9 +160,9 @@ def main():
                         help="Port to listen on (default: 5000)")
     args = parser.parse_args()
 
-    # driver = LeptonDriver()
-    driver = LeptonDriverShim("/home/mbtowns/sample-capture-2025-12-01.bin")
-    producer = FrameProducer(driver, fps=9)
+    driver = LeptonDriver()
+    # driver = LeptonDriverShim("/home/mbtowns/sample-capture-2025-12-01.bin")
+    producer = FrameProducer(driver, fps=27)
 
     server = AppServer(producer)
     server.run(host=args.host, port=args.port)

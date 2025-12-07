@@ -29,6 +29,21 @@ https://groupgets-files.s3.amazonaws.com/lepton/Resources/Getting%20Started%20wi
 | SCLK(23) | SPI_CLK(7) |
 | CEO(24) | SPI_CS(10) |
 
+### Setup notes
+
+Must instsall pycamera2
+
+```bash
+sudo apt install python3-picamera2
+```
+
+Need to create a venv using the system site packets.  Raspberry Pi packages
+picamera2 as an application, so its in the system packages...
+
+```bash
+python3 -m venv --system-site-packages .venv
+```
+
 ### Reference documents
 
 https://www.digikey.tw/htmldatasheets/production/1752535/0/0/1/500-0643-00.pdf

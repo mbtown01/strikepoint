@@ -13,5 +13,9 @@
         "unistd.h": "c",
         "errno.h": "c",
         "lepton_sdk.h": "c"
-    }
+    },
+    "C_Cpp.formatting": "clangFormat",
+    "C_Cpp.clang_format_style": "file",
+    "C_Cpp.clang_format_formatOnSave": true,
+    "C_Cpp.clang_format_fallbackStyle": "Microsoft"
 }

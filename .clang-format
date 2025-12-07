@@ -1,0 +1,24 @@
+# .clang-format configuration for VS Code / C/C++
+
+# Base style to inherit from
+BasedOnStyle: LLVM
+
+# Indentation
+IndentWidth: 4
+UseTab: Never
+
+# Brace placement
+BreakBeforeBraces: Attach           # Keep opening braces on the same line
+AlignClosingBraceWithControl: false # Closing braces are not indented
+
+# Spaces
+SpaceAfterCStyleCast: true
+SpaceBeforeParens: ControlStatements
+
+# Line length 
+ColumnLimit: 0 # 0 disables line wrapping entirely
+
+# Other options (optional)
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: InlineOnly
