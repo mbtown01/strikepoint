@@ -75,7 +75,12 @@ int main(int argc, char *argv[]) {
     }
 
     LEPDRV_DriverInfo driverInfo;
-    LEPDRV_SessionHandle hndl = LEPDRV_Init(&driverInfo);
+    LEPDRV_SessionHandle hndl;
+    if (0 != LEPDRV_Init(&hndl, &driverInfo)) {
+        fprintf(stderr, "Error initializing Lepton driver\n");
+        exit(1);
+    }
+
     const int frameSize = driverInfo.frameHeight * driverInfo.frameWidth;
     float *buffer = (float *) malloc(frameSize);
 

@@ -10,13 +10,13 @@
 #include <unistd.h>
 
 #include "LEPTON_ErrorCodes.h"
+#include "LEPTON_AGC.h"
 #include "LEPTON_OEM.h"
 #include "LEPTON_RAD.h"
 #include "LEPTON_SDK.h"
 #include "LEPTON_SYS.h"
-#include "LEPTON_VID.h"
 #include "LEPTON_Types.h"
-#include "LEPTON_AGC.h"
+#include "LEPTON_VID.h"
 #include "crc16.h"
 #include "driver.h"
 
@@ -59,8 +59,15 @@ typedef struct {
     int spiFd;
 } LEPDRV_Session;
 
-int _initSpi(LEPDRV_Session *session) {
-    int rtn;
+int LEPDRV_Init(LEPDRV_SessionHandle *hndlPtr, LEPDRV_DriverInfo *info) {
+    if (hndlPtr == NULL)
+        return -1;
+    if (info == NULL)
+        return -1;
+
+    LEPDRV_Session localSession;
+    LEPDRV_Session *session = &localSession;
+
     session->spiMode = SPI_MODE_3;
     session->spiBitsPerWord = 8;
     session->spiSpeed = 10000000;
@@ -81,18 +88,6 @@ int _initSpi(LEPDRV_Session *session) {
     ASSERT_CALL_IO(
         ioctl(session->spiFd, SPI_IOC_RD_MAX_SPEED_HZ, &session->spiSpeed));
 
-    return (0);
-}
-
-int _closeSpi(LEPDRV_Session *session) {
-    int rtn = close(session->spiFd);
-    if (rtn < 0)
-        ERROR("Error - Could not close SPI device");
-
-    return (0);
-}
-
-int _initI2C(LEPDRV_Session *session) {
     LEP_STATUS_T statusDesc;
 
     // Initialize and open the camera port (example values)
@@ -161,37 +156,16 @@ int _initI2C(LEPDRV_Session *session) {
      * Camera is now configured for optimal small-delta detection
      ***************************************************************************/
 
-    return 0;
-}
-
-int _closeI2C(LEPDRV_Session *session) {
-    if (session == NULL)
-        ERROR("SDK not initialized");
-
-    // Close the camera port
-    ASSERT_CALL_LEP(LEP_ClosePort(&session->portDesc));
-
-    return (0);
-}
-
-LEPDRV_SessionHandle LEPDRV_Init(LEPDRV_DriverInfo *info) {
-    if (NULL == info)
-        return NULL;
-
-    LEPDRV_Session localSession;
-    if (0 != _initSpi(&localSession))
-        return NULL;
-    if (0 != _initI2C(&localSession))
-        return NULL;
-
     info->versionMajor = 1;
     info->versionMinor = 0;
     info->frameWidth = FRAME_WIDTH;
     info->frameHeight = FRAME_HEIGHT;
 
-    LEPDRV_Session *session = (LEPDRV_Session *) malloc(sizeof(LEPDRV_Session));
+    // Create the final session handle and return it
+    session = (LEPDRV_Session *) malloc(sizeof(LEPDRV_Session));
     memcpy(session, &localSession, sizeof(LEPDRV_Session));
-    return session;
+    hndlPtr[0] = (LEPDRV_SessionHandle) session;
+    return 0;
 }
 
 int LEPDRV_GetFrame(LEPDRV_SessionHandle hndl, float *frameBuffer,
@@ -220,15 +194,14 @@ int LEPDRV_GetFrame(LEPDRV_SessionHandle hndl, float *frameBuffer,
         for (int p = 1; p < PACKETS_PER_FRAME; p++, goodPackets++) {
             read(session->spiFd, buff[p], PACKET_SIZE);
             if (buff[p][0] & 0x0F != 0 || buff[p][1] != p) {
-                printf("[BAD] p=%d %02x %02x %02x %02x\n", p, buff[0][0],
-                       buff[0][1], buff[0][3], buff[0][3]);
+                // printf("[BAD] p=%d %02x %02x %02x %02x\n", p, buff[0][0],
+                //        buff[0][1], buff[0][3], buff[0][3]);
                 break;
             }
         }
 
         if (goodPackets != PACKETS_PER_FRAME) {
-            printf("[WAIT] only received %d good packets\n", goodPackets);
-            // _closeSpi(session);
+            // printf("[WAIT] only received %d good packets\n", goodPackets);
             // ASSERT_CALL_LEP(LEP_RunOemReboot(&(session->portDesc)));
             usleep(50000);
             ++failedAttemptCount;
@@ -244,8 +217,6 @@ int LEPDRV_GetFrame(LEPDRV_SessionHandle hndl, float *frameBuffer,
                 frameBuffer[i] = (frameBuffer[i] * 9.0f / 5.0f) + 32.0f;
         }
 
-        // printf("Frame\n");
-
         return 0;
     }
 
@@ -257,8 +228,13 @@ int LEPDRV_Shutdown(LEPDRV_SessionHandle hndl) {
         ERROR("SDK not initialized");
     LEPDRV_Session *session = (LEPDRV_Session *) hndl;
 
-    _closeSpi(session);
-    _closeI2C(session);
+    int rtn = close(session->spiFd);
+    if (rtn < 0)
+        ERROR("Error - Could not close SPI device");
+
+    // Close the camera port
+    ASSERT_CALL_LEP(LEP_ClosePort(&session->portDesc));
+
     free(session);
     return (0);
 }

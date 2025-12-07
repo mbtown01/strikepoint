@@ -14,13 +14,15 @@ typedef struct {
 } LEPDRV_DriverInfo;
 
 // Create a new session
-LEPDRV_SessionHandle LEPDRV_Init(LEPDRV_DriverInfo *info);
+int LEPDRV_Init(
+    LEPDRV_SessionHandle *hndlPtr, LEPDRV_DriverInfo *info);
 
 // Gets the next (raw) frame of data from the device in degC (or degF)
-int LEPDRV_GetFrame(LEPDRV_SessionHandle hndl, float *frameBuffer,
-                    bool asFahrenheit);
+int LEPDRV_GetFrame(
+    LEPDRV_SessionHandle hndl, float *frameBuffer, bool asFahrenheit);
 
 // Close a session
-int LEPDRV_Shutdown(LEPDRV_SessionHandle hndl);
+int LEPDRV_Shutdown(
+    LEPDRV_SessionHandle hndl);
 
 #endif

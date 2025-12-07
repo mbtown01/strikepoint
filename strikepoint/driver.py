@@ -54,8 +54,6 @@ class LeptonDriver:
                     "Could not locate Lepton SDK shared library; pass libpath explicitly")
 
         lib = ctypes.CDLL(libPath)
-        self._fn_init = getattr(lib, "LEPDRV_Init", None)
-        self._fn_init.restype = ctypes.c_void_p
 
         # LEPDRV_Shutdown -> int LEPDRV_Shutdown(void)
         self._fn_shutdown = getattr(lib, "LEPDRV_Shutdown", None)
@@ -68,10 +66,17 @@ class LeptonDriver:
         self._fn_getframe.argtypes = [
             ctypes.c_void_p, ctypes.POINTER(ctypes.c_float), ctypes.c_bool]
 
+        # LEPDRV_GetFrame -> int LEPDRV_Init(void **hndl, LEPDRV_DriverInfo *info)
+        fn_init = getattr(lib, "LEPDRV_Init", None)
+        fn_init.restype = ctypes.c_int
+        fn_init.argtypes = [
+            ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(LEPDRV_DriverInfo)]
+        
         info = LEPDRV_DriverInfo()
-        self.hndl = self._fn_init(ctypes.byref(info))
-        if self.hndl == 0:
-            raise RuntimeError(f"LEPDRV_Init failed")
+        self.hndl = ctypes.c_void_p()
+        rc = fn_init(ctypes.byref(self.hndl), ctypes.byref(info))
+        if rc != 0:
+            raise RuntimeError(f"LEPDRV_Init failed rc={rc}")
 
         self.frameWidth = info.framwidth
         self.frameHeight = info.frameHeight
@@ -79,16 +84,12 @@ class LeptonDriver:
     def shutdown(self):
         if self._fn_shutdown is None:
             raise AttributeError("LEPDRV_Shutdown not found in library")
+
         rc = self._fn_shutdown(self.hndl)
         if rc != 0:
             raise RuntimeError(f"LEPDRV_Shutdown failed rc={rc}")
-        return rc
 
     def getFrame(self, asFahrenheit=True, timeout_s=None):
-        """Capture one frame into a numpy float32 array (shape 60x80).
-
-        Returns numpy.ndarray dtype float32 shaped (FRAME_HEIGHT, FRAME_WIDTH).
-        """
         if self._fn_getframe is None:
             raise AttributeError("LEPDRV_GetFrame not found in library")
 
