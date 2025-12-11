@@ -14,6 +14,9 @@ https://flir.netx.net/file/asset/13333/original/attachment
 ### Sparkfun setup and initial project
 https://learn.sparkfun.com/tutorials/flir-lepton-hookup-guide/all
 https://cdn.sparkfun.com/assets/8/0/d/b/3/DS-16912-FLiR_Lepton_-_Breakout_Board_V2.pdf
+
+API docs
+https://cdn.sparkfun.com/assets/0/6/d/2/e/16465-FLIRLepton-SoftwareIDD.pdf
 https://groupgets-files.s3.amazonaws.com/lepton/Resources/Getting%20Started%20with%20the%20Raspberry%20Pi%20and%20Breakout%20Board%20V2.0.pdf
 
 ### Simple camera wiring

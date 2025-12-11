@@ -19,18 +19,18 @@
             "console": "internalConsole"
         },
         {
-            "name": "Debug demo.c",
+            "name": "capture",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/driver/Debug/demo",
+            "program": "${workspaceFolder}/leptonDriver/Debug/capture",
             "args": [],
             "stopAtEntry": false,
-            "cwd": "${workspaceFolder}/driver",
+            "cwd": "${workspaceFolder}/leptonDriver",
             "environment": [],
             "externalConsole": false,
             "MIMode": "gdb",
             "miDebuggerPath": "/usr/bin/gdb",
-            "preLaunchTask": "build demo",
+            "preLaunchTask": "build capture",
             "setupCommands": [
                 {
                     "description": "Enable pretty-printing for gdb",

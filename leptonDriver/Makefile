@@ -13,22 +13,24 @@ CCARGS=-O2
 endif
 
 NAME=libleptonDriver
-OBJ := $(shell for i in *.c; do echo $(OUTDIR)/$${i%.c}.o; done)
+OBJ := $(patsubst %.c,$(OUTDIR)/%.o,$(wildcard *.c))
 
-# Pattern rules
-$(OUTDIR)/%.o : %.c
-	gcc -Dlinux=1 -fPIC -c  -v  $(CCARGS) -o "$(OUTDIR)/$(*F).o" "$<"
+# Pattern rules: use $@ and $< so targets and prerequisites line up correctly.
+# Make sure the OUTDIR exists as an order-only prerequisite so changing the dir
+# timestamp doesn't force rebuilds of downstream targets.
+$(OUTDIR)/%.o : %.c | $(OUTDIR)
+	gcc -Dlinux=1 -fPIC -c $(CCARGS) -o $@ $<
 
 # Build rules
 all: $(OUTDIR)/$(NAME).a $(OUTDIR)/$(NAME).so $(OUTDIR)/capture
 
-$(OUTDIR)/$(NAME).a: $(OUTDIR) $(OBJ)
+$(OUTDIR)/$(NAME).a: $(OBJ)
 	ar -rs  "$@" $(OBJ)
 
-$(OUTDIR)/$(NAME).so: $(OUTDIR) $(OBJ)
+$(OUTDIR)/$(NAME).so: $(OBJ)
 	gcc -shared -Wl,-soname,$(NAME).so -o "$@" $(OBJ)
 
-$(OUTDIR)/capture: $(OUTDIR) $(OUTDIR)/capture.o $(OUTDIR)/$(NAME).a
+$(OUTDIR)/capture: $(OUTDIR)/capture.o $(OUTDIR)/$(NAME).a
 	gcc -o "$@" "$(OUTDIR)/capture.o" $(OUTDIR)/$(NAME).a -lpthread -lm -ldl
 
 $(OUTDIR):
@@ -43,3 +45,4 @@ clean:
 
 # Clean this project and all dependencies
 cleanall: clean
+

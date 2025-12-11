@@ -2,9 +2,9 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "build demo",
+            "label": "build capture",
             "type": "shell",
-            "command": "cd driver && make CFG=Debug Debug/demo",
+            "command": "cd leptonDriver && make CFG=Debug Debug/capture",
             "group": {
                 "kind": "build",
                 "isDefault": true

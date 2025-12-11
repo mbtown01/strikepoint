@@ -3,6 +3,7 @@
 #endif
 
 #include "driver.h"
+#include "crc16.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
@@ -91,12 +92,15 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
+    CRC16 crcOld=0;
     for (int i = 0; i < frames; i++) {
         double start = get_time_sec();
         if (0 != LEPDRV_GetFrame(hndl, buffer, true)) {
             fprintf(stderr, "Error capturing frame %d\n", i);
             break;
         }
+
+        CRC16 crcNew = CalcCRC16Bytes(sizeof(float)*frameSize, (char *)buffer);
 
         ssize_t wrote = write(fd, buffer, frameSize * sizeof(float));
         if (wrote != (ssize_t) (frameSize * sizeof(float))) {
@@ -106,7 +110,7 @@ int main(int argc, char *argv[]) {
 
         double elapsed = get_time_sec() - start;
         double delay = (1.0 / fps) - elapsed;
-        printf("Frame %d elapsed=%lf delay=%lf\n", i, elapsed, delay);
+        printf("Frame %d crc=%x elapsed=%lf delay=%lf\n", i, crcNew, elapsed, delay);
         if (delay > 0)
             usleep(delay * 1e6);
     }

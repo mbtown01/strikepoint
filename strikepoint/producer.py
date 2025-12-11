@@ -1,4 +1,4 @@
-from threading import Lock
+
 import time
 import threading
 import cv2
@@ -6,11 +6,12 @@ import numpy as np
 
 import argparse
 
+from picamera2 import Picamera2
 from time import sleep, monotonic
 from flask import Flask, Response
 from strikepoint.driver import LeptonDriver
 from logging import getLogger
-from queue import Queue, ShutDown
+from queue import Queue, ShutDown, Empty
 
 
 class LeptonDriverShim:
@@ -38,24 +39,82 @@ class FrameProducer:
     and min/max temperatures in Fahrenheit.
     """
 
-    def __init__(self, driver, depth: int = 4, fps: int = 27):
+    def __init__(self, driver, picam, *, depth: int = 4, fps: int = 9):
         self.driver = driver
+        self.picam = picam
+        self.picam.start()
         self.fps = fps
         self.depth = depth
-        self.rawQueue = Queue(maxsize=1)
-        self.vidQueue = Queue(maxsize=1)
+        self.lastVisualRaw = None
+        self.lastThermalRaw = None
+        self.lastThermalDiff = None
+        self.shutdownRequested = False
         self.thread = threading.Thread(target=self._threadMain, daemon=True)
         self.thread.start()
 
+    def _encodeFrame(self, frame: np.ndarray) -> bytes:
+        ok, encoded = cv2.imencode(".jpg", frame)
+        if not ok:
+            raise RuntimeError("Failed to encode frame")
+        return b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + \
+            encoded.tobytes() + b"\r\n"
+
     def _threadMain(self):
-        while True:
+        frameList, lastFrame = [], None
+
+        while not self.shutdownRequested:
             try:
+                print("Capturing frames 1...")
                 startTime = monotonic()
-                frame = self.driver.getFrame(True)
-                if not self.rawQueue.full():
-                    self.rawQueue.put(frame)
-                if not self.vidQueue.full():
-                    self.vidQueue.put(frame)
+
+                print("Capturing frames 2...")
+                thermalFrame = self.driver.getFrame(True)
+                print("Capturing frames 3...")
+                visualFrame = self.picam.capture_array()
+                print("Capturing frames 4...")
+
+                # Process visual frame
+                frame = visualFrame
+                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                frame = cv2.rotate(frame, cv2.ROTATE_180)
+                frame = cv2.flip(frame, 0)
+                frame = cv2.flip(frame, 1)
+                self.lastVisualRaw = frame
+
+                # Process thermal frame
+                frame = thermalFrame
+                print(f"Raw frame min/max: {np.min(frame)}/{np.max(frame)}")
+                frame = cv2.flip(frame, 0)
+                frame = cv2.flip(frame, 1)
+                frame = cv2.resize(frame, (frame.shape[1]*4, frame.shape[0]*4),
+                                   interpolation=cv2.INTER_NEAREST)
+                frame = cv2.normalize(
+                    frame, None, 50, 200, cv2.NORM_MINMAX).astype(np.uint8)
+                frame = cv2.applyColorMap(frame, cv2.COLORMAP_HOT)
+                self.lastThermalRaw = frame
+
+                # Process thermal diff frame
+                thisFrame = thermalFrame
+                frameList.append(thisFrame)
+                while len(frameList) > self.depth:
+                    frameList.pop(0)
+                if len(frameList) == self.depth:
+                    lastFrame, thisFrame = \
+                        thisFrame, np.mean(frameList, axis=0)
+                    if lastFrame is None:
+                        continue
+                    if np.equal(thisFrame, lastFrame).all():
+                        continue
+
+                    frame = thisFrame-lastFrame
+                    frame = cv2.resize(frame, (frame.shape[1]*4, frame.shape[0]*4),
+                                       interpolation=cv2.INTER_NEAREST)
+                    frame = cv2.GaussianBlur(frame, (13, 13), 0)
+                    frame = cv2.normalize(
+                        frame, None, 50, 200, cv2.NORM_MINMAX).astype(np.uint8)
+                    frame = cv2.applyColorMap(frame, cv2.COLORMAP_HOT)
+                    self.lastThermalDiff = frame
+
                 elapsed = monotonic() - startTime
                 time.sleep(max(0, (1.0/self.fps)-elapsed))
             except ShutDown:
@@ -63,73 +122,44 @@ class FrameProducer:
             except Exception as ex:
                 getLogger().error(f"FrameProducer thread exception: {ex}")
 
-    def rawGenerator(self):
+    def visualRawGenerator(self):
         while True:
-            frame = self.rawQueue.get(timeout=1.0)
-            frame = cv2.resize(frame, (frame.shape[1]*4, frame.shape[0]*4),
-                               interpolation=cv2.INTER_NEAREST)
-            frame = cv2.normalize(
-                frame, None, 50, 200, cv2.NORM_MINMAX).astype(np.uint8)
-            frame = cv2.applyColorMap(frame, cv2.COLORMAP_HOT)
-            ok, encoded = cv2.imencode(".jpg", frame)
-            if ok:
-                yield (
-                    b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" +
-                    encoded.tobytes() + b"\r\n")
+            yield self._encodeFrame(self.lastVisualRaw)
 
-    def vidGenerator(self):
-        frameList, lastFrame = [], None
-
+    def thermalRawGenerator(self):
         while True:
-            thisFrame = self.vidQueue.get(timeout=1.0)
-            frameList.append(thisFrame)
-            if len(frameList) < self.depth:
-                continue
-            while len(frameList) > self.depth:
-                frameList.pop(0)
+            yield self._encodeFrame(self.lastThermalRaw)
 
-            lastFrame, thisFrame = \
-                thisFrame, np.mean(frameList, axis=0)
-            if lastFrame is None:
-                continue
-            if np.equal(thisFrame, lastFrame).all():
-                continue
-
-            frame = thisFrame-lastFrame
-            frame = cv2.resize(frame, (frame.shape[1]*4, frame.shape[0]*4),
-                               interpolation=cv2.INTER_NEAREST)
-            frame = cv2.GaussianBlur(frame, (13, 13), 0)
-            frame = cv2.normalize(
-                frame, None, 50, 200, cv2.NORM_MINMAX).astype(np.uint8)
-            frame = cv2.applyColorMap(frame, cv2.COLORMAP_HOT)
-            ok, encoded = cv2.imencode(".jpg", frame)
-            if ok:
-                yield (
-                    b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" +
-                    encoded.tobytes() + b"\r\n")
+    def thermalDiffGenerator(self):
+        while True:
+            yield self._encodeFrame(self.lastThermalDiff)
 
     def stop(self):
-        self.rawQueue.shutdown()
-        self.vidQueue.shutdown()
-        self.driver.shutdown()
-        self.lepton.close()
-        self.thread.join(timeout=1.0)
+        print("Shutting down FrameProducer...")
+        self.shutdownRequested = True
+        self.thread.join()
 
 
 class AppServer:
     def __init__(self, producer: FrameProducer):
         self.app = Flask(__name__)
 
-        @self.app.route("/video")
-        def video():
+        @self.app.route("/thermalDiff")
+        def thermalDiff():
             return Response(
-                producer.vidGenerator(),
+                producer.thermalDiffGenerator(),
                 mimetype="multipart/x-mixed-replace; boundary=frame")
 
-        @self.app.route("/videoRaw")
-        def videoRaw():
+        @self.app.route("/thermalRaw")
+        def thermalRaw():
             return Response(
-                producer.rawGenerator(),
+                producer.thermalRawGenerator(),
+                mimetype="multipart/x-mixed-replace; boundary=frame")
+
+        @self.app.route("/visualRaw")
+        def visualRaw():
+            return Response(
+                producer.visualRawGenerator(),
                 mimetype="multipart/x-mixed-replace; boundary=frame")
 
         @self.app.route("/")
@@ -138,8 +168,9 @@ class AppServer:
             <html>
             <body style="background:#111;color:#ddd;font-family:sans-serif;">
                 <h2>Video Stream</h2>
-                <img src="/videoRaw" height="480" width="640"/>
-                <img src="/video" height="480" width="640"/>
+                <img src="/thermalRaw" height="480" width="640"/>
+                <img src="/thermalDiff" height="480" width="640"/>
+                <img src="/visualRaw" height="480" width="640"/>
             </body>
             </html>
             """
@@ -162,7 +193,7 @@ def main():
 
     driver = LeptonDriver()
     # driver = LeptonDriverShim("/home/mbtowns/sample-capture-2025-12-01.bin")
-    producer = FrameProducer(driver, fps=27)
+    producer = FrameProducer(driver, fps=9)
 
     server = AppServer(producer)
     server.run(host=args.host, port=args.port)
