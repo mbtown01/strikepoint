@@ -27,7 +27,7 @@ class LeptonDriverShim:
     def shutdown(self):
         return 0
 
-    def getFrame(self, asFahrenheit: bool):
+    def getFrame(self):
         frame = self.data[self.count *
                           self.frameSize:(self.count+1)*self.frameSize]
         self.count = (self.count + 1) % self.entries
@@ -36,7 +36,7 @@ class LeptonDriverShim:
 
 class FrameProducer:
     """Background thread capturing frames and keeping the latest PNG bytes
-    and min/max temperatures in Fahrenheit.
+    and min/max temperatures.
     """
 
     def __init__(self, driver, picam, *, depth: int = 4, fps: int = 9):
@@ -64,14 +64,9 @@ class FrameProducer:
 
         while not self.shutdownRequested:
             try:
-                print("Capturing frames 1...")
                 startTime = monotonic()
-
-                print("Capturing frames 2...")
-                thermalFrame = self.driver.getFrame(True)
-                print("Capturing frames 3...")
+                thermalFrame = self.driver.getFrame()
                 visualFrame = self.picam.capture_array()
-                print("Capturing frames 4...")
 
                 # Process visual frame
                 frame = visualFrame
@@ -83,7 +78,7 @@ class FrameProducer:
 
                 # Process thermal frame
                 frame = thermalFrame
-                print(f"Raw frame min/max: {np.min(frame)}/{np.max(frame)}")
+                # print(f"Raw frame min/max: {np.min(frame)}/{np.max(frame)}")
                 frame = cv2.flip(frame, 0)
                 frame = cv2.flip(frame, 1)
                 frame = cv2.resize(frame, (frame.shape[1]*4, frame.shape[0]*4),
@@ -135,7 +130,6 @@ class FrameProducer:
             yield self._encodeFrame(self.lastThermalDiff)
 
     def stop(self):
-        print("Shutting down FrameProducer...")
         self.shutdownRequested = True
         self.thread.join()
 

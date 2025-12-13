@@ -3,18 +3,11 @@ import os
 import ctypes.util
 import numpy as np
 
+from enum import IntEnum
+
 # Define a ctypes Structure that mirrors the new LEPDRV_DriverInfo type.
 # Keep fields minimal and backward-compatible; we set the size before calling
 # LEPDRV_Init so the native side can detect the structure version.
-
-
-class LEPDRV_DriverInfo(ctypes.Structure):
-    _fields_ = [
-        ("versionMajor", ctypes.c_uint8),
-        ("versionMinor", ctypes.c_uint8),
-        ("framwidth", ctypes.c_uint16),
-        ("frameHeight", ctypes.c_uint16),
-    ]
 
 
 def find_library_path(name_hint="libleptonDriver.so"):
@@ -38,13 +31,26 @@ def find_library_path(name_hint="libleptonDriver.so"):
 
 class LeptonDriver:
     """ctypes wrapper around LEPDRV_* functions from the C driver.
-
-    Notes:
-      - The SDK recently added LEPDRV_DriverInfo and changed LEPDRV_Init to
-        accept a pointer to that struct. This wrapper attempts to call the new
-        init signature first (passing a LEPDRV_DriverInfo with 'size' set),
-        and falls back to the legacy no-arg init if the call raises TypeError.
     """
+
+    class TemperatureUnit(IntEnum):
+        KELVIN = 0
+        CELCIUS = 1
+        FAHRENHEIT = 2
+
+    class LEPDRV_DriverInfo(ctypes.Structure):
+        _fields_ = [
+            ("versionMajor", ctypes.c_uint8),
+            ("versionMinor", ctypes.c_uint8),
+            ("framwidth", ctypes.c_uint16),
+            ("frameHeight", ctypes.c_uint16),
+        ]
+
+    allFnNameList = [
+        "LEPDRV_Shutdown", "LEPDRV_Init", "LEPDRV_GetFrame",
+        "LEPDRV_CameraDisable", "LEPDRV_CameraEnable",
+        "LEPDRV_SetTemperatureUnits", "LEPDRV_CheckIsRunning",
+        "LEPDRV_SetLogFile", "LEPDRV_StartPolling"]
 
     def __init__(self, libPath=None):
         if libPath is None:
@@ -55,52 +61,87 @@ class LeptonDriver:
 
         lib = ctypes.CDLL(libPath)
 
-        # LEPDRV_Shutdown -> int LEPDRV_Shutdown(void)
-        self._fn_shutdown = getattr(lib, "LEPDRV_Shutdown", None)
-        self._fn_shutdown.restype = ctypes.c_int
-        self._fn_shutdown.argtypes = [ctypes.c_void_p]
+        self.fnMap = dict()
+        for fnName in self.allFnNameList:
+            self.fnMap[fnName] = getattr(lib, fnName, None)
+            if self.fnMap[fnName] is None:
+                raise AttributeError(f"Symbol {fnName} not found in library")
+            self.fnMap[fnName].restype = ctypes.c_int
+            self.fnMap[fnName].argtypes = [ctypes.c_void_p]
 
-        # LEPDRV_GetFrame -> int LEPDRV_GetFrame(float* buffer, bool asFahrenheit)
-        self._fn_getframe = getattr(lib, "LEPDRV_GetFrame", None)
-        self._fn_getframe.restype = ctypes.c_int
-        self._fn_getframe.argtypes = [
-            ctypes.c_void_p, ctypes.POINTER(ctypes.c_float), ctypes.c_bool]
+        self.fnMap["LEPDRV_Init"].argtypes = [
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(LeptonDriver.LEPDRV_DriverInfo)]
+        self.fnMap["LEPDRV_GetFrame"].argtypes = [
+            ctypes.c_void_p, ctypes.POINTER(ctypes.c_float)]
+        self.fnMap["LEPDRV_SetTemperatureUnits"].argtypes = [
+            ctypes.c_void_p, ctypes.c_int]
+        self.fnMap["LEPDRV_CheckIsRunning"].argtypes = [
+            ctypes.c_void_p, ctypes.POINTER(ctypes.c_bool)]
+        self.fnMap["LEPDRV_SetLogFile"].argtypes = [
+            ctypes.c_void_p, ctypes.c_char_p]
 
-        # LEPDRV_GetFrame -> int LEPDRV_Init(void **hndl, LEPDRV_DriverInfo *info)
-        fn_init = getattr(lib, "LEPDRV_Init", None)
-        fn_init.restype = ctypes.c_int
-        fn_init.argtypes = [
-            ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(LEPDRV_DriverInfo)]
-        
-        info = LEPDRV_DriverInfo()
+        info = LeptonDriver.LEPDRV_DriverInfo()
         self.hndl = ctypes.c_void_p()
-        rc = fn_init(ctypes.byref(self.hndl), ctypes.byref(info))
+        rc = self.fnMap["LEPDRV_Init"](
+            ctypes.byref(self.hndl), ctypes.byref(info))
         if rc != 0:
             raise RuntimeError(f"LEPDRV_Init failed rc={rc}")
 
         self.frameWidth = info.framwidth
         self.frameHeight = info.frameHeight
+        # self.setLogFile("/dev/null")
+
+    def _makeApiCall(self, fnName: str, *args):
+        if fnName not in self.allFnNameList:
+            raise RuntimeError(f"Method '{fnName}' not a valid API call")
+        rc = self.fnMap[fnName](self.hndl, *args)
+        if rc != 0:
+            raise RuntimeError(f"Call to {fnName} failed rc={rc}")
+
+    def startPolling(self):
+        """Start the SPI poling thread.
+        """
+        self._makeApiCall("LEPDRV_StartPolling")
 
     def shutdown(self):
-        if self._fn_shutdown is None:
-            raise AttributeError("LEPDRV_Shutdown not found in library")
+        """Shutdown the driver.
+        """
+        self._makeApiCall("LEPDRV_Shutdown")
 
-        rc = self._fn_shutdown(self.hndl)
-        if rc != 0:
-            raise RuntimeError(f"LEPDRV_Shutdown failed rc={rc}")
+    def isRunning(self) -> bool:
+        """Check if the driver is running.
+        """
+        isRunning = ctypes.c_bool()
+        self._makeApiCall("LEPDRV_CheckIsRunning", ctypes.byref(isRunning))
+        return isRunning.value
 
-    def getFrame(self, asFahrenheit=True, timeout_s=None):
-        if self._fn_getframe is None:
-            raise AttributeError("LEPDRV_GetFrame not found in library")
+    def setLogFile(self, logFile: str):
+        """Set the log file
+        """
+        self._makeApiCall(
+            "LEPDRV_SetLogFile", ctypes.c_char_p(bytes(logFile, encoding="utf8")))
 
-        framePixels = self.frameWidth * self.frameHeight
-        buf = np.empty(framePixels, dtype=np.float32)
-        # get pointer to buffer
+    def setTemperatureUnits(self, unit: TemperatureUnit):
+        """Set temperature units on the driver.
+        """
+        self._makeApiCall("LEPDRV_SetTemperatureUnits", ctypes.c_int(unit))
+
+    def cameraEnable(self):
+        """Enable the camera.
+        """
+        self._makeApiCall("LEPDRV_CameraEnable")
+
+    def cameraDisable(self):
+        """Disable the camera.
+        """
+        self._makeApiCall("LEPDRV_CameraDisable")
+
+    def getFrame(self):
+        """Get a single frame from the driver."""
+        buf = np.empty(self.frameWidth * self.frameHeight, dtype=np.float32)
         buf_ptr = buf.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
-        rc = self._fn_getframe(
-            self.hndl, buf_ptr, ctypes.c_bool(bool(asFahrenheit)))
-        if rc != 0:
-            raise RuntimeError(f"LEPDRV_GetFrame failed rc={rc}")
+        self._makeApiCall("LEPDRV_GetFrame", buf_ptr)
         return buf.reshape((self.frameHeight, self.frameWidth))
 
     # convenience context manager

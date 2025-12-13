@@ -2,8 +2,8 @@
 #define CLOCK_MONOTONIC 1
 #endif
 
-#include "driver.h"
 #include "crc16.h"
+#include "driver.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
@@ -48,7 +48,7 @@ int main(int argc, char *argv[]) {
 
     int opt, option_index = 0;
     char *endptr = NULL;
-    while ((opt = getopt_long(argc, argv, "f:o:d:h", long_options,
+    while ((opt = getopt_long(argc, argv, "f:o:p:h", long_options,
                               &option_index)) != -1) {
         switch (opt) {
         case 'f': {
@@ -82,9 +82,8 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-    const int frameSize = driverInfo.frameHeight * driverInfo.frameWidth;
-    float *buffer = (float *) malloc(frameSize);
-
+    const int pixelCount = driverInfo.frameHeight * driverInfo.frameWidth;
+    float *buffer = (float *) malloc(sizeof(float) * pixelCount);
     int fd = open(outfile, O_CREAT | O_WRONLY | O_TRUNC, 0664);
     if (fd < 0) {
         perror("open(output.bin)");
@@ -92,30 +91,48 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-    CRC16 crcOld=0;
+    // If we needed to set units or anything, we'd do that before we
+    // start polling here
+    LEPDRV_StartPolling(hndl);
+
+    CRC16 crcOld = 0;
     for (int i = 0; i < frames; i++) {
         double start = get_time_sec();
-        if (0 != LEPDRV_GetFrame(hndl, buffer, true)) {
+        if (0 != LEPDRV_GetFrame(hndl, buffer)) {
             fprintf(stderr, "Error capturing frame %d\n", i);
             break;
         }
 
-        CRC16 crcNew = CalcCRC16Bytes(sizeof(float)*frameSize, (char *)buffer);
+        CRC16 crcNew = CalcCRC16Bytes(sizeof(float) * pixelCount, (char *) buffer);
 
-        ssize_t wrote = write(fd, buffer, frameSize * sizeof(float));
-        if (wrote != (ssize_t) (frameSize * sizeof(float))) {
+        ssize_t wrote = write(fd, buffer, pixelCount * sizeof(float));
+        if (wrote != (ssize_t) (pixelCount * sizeof(float))) {
             fprintf(stderr, "Error writing frame %d: %s\n", i, strerror(errno));
             break;
         }
 
+        float minVal = 1e30, maxVal = -1e30;
+        for (int j = 0; j < pixelCount; j++) {
+            float v = buffer[j];
+            if (v < minVal)
+                minVal = v;
+            if (v > maxVal)
+                maxVal = v;
+        }
+
         double elapsed = get_time_sec() - start;
         double delay = (1.0 / fps) - elapsed;
-        printf("Frame %d crc=%x elapsed=%lf delay=%lf\n", i, crcNew, elapsed, delay);
+        printf("Frame %d crc=%x elapsed=%lf delay=%lf min=%f, max=%f\n", 
+            i, crcNew, elapsed, delay, minVal, maxVal);
+        // for( int i=0; i<16; i++)
+        //     printf("%f ", buffer[i]);
+        // printf("\n");
         if (delay > 0)
             usleep(delay * 1e6);
     }
 
     close(fd);
+    printf("Done capturing frames, calling shutdown\n");
     LEPDRV_Shutdown(hndl);
 
     return 0;

@@ -17,5 +17,5 @@
     "C_Cpp.formatting": "clangFormat",
     "C_Cpp.clang_format_style": "file",
     "C_Cpp.clang_format_formatOnSave": true,
-    "C_Cpp.clang_format_fallbackStyle": "Microsoft"
+    "C_Cpp.clang_format_fallbackStyle": "Microsoft",
 }
