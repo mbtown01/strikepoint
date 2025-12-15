@@ -1,13 +1,15 @@
-import time
-import atexit
 import cv2
 import numpy as np
+import dash_bootstrap_components as dbc
 
+from struct import pack
 from flask import Response, stream_with_context
 from dash import Dash, html, dcc
 from dash.dependencies import Input, Output
 from strikepoint.producer import FrameProducer
-import dash_bootstrap_components as dbc
+from strikepoint.driver import LeptonDriver
+from picamera2 import Picamera2
+from threading import Lock
 
 
 class StrikePointDashApp:
@@ -16,14 +18,40 @@ class StrikePointDashApp:
         self.app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 
         self.server = self.app.server  # Flask server used for the stream route
-        self.producer = FrameProducer(interval=interval)
+        self.driver = LeptonDriver()
+        self.driver.setLogFile('dashApp.log')
+        self.driver.startPolling()
+        self.picam = Picamera2()
+
+        self.producer = FrameProducer(self.driver, self.picam)
+        self.isRecording = False
+        self.recStream = None
+        self.recLock = Lock()
+
         self.register_callbacks()
 
     def register_callbacks(self):
+
+        def hstackGenerator():
+            while True:
+                frame = self.producer.getFrame()
+                with self.recLock:
+                    if self.recStream is not None:
+                        success, encoded = cv2.imencode(".png", frame)
+                        if not success:
+                            raise RuntimeError("Image encoding failed")
+
+                        data = encoded.tobytes()
+                        self.recStream.write(pack(">I", len(data)))
+                        self.recStream.write(data)
+                encoded = self.producer.encodeFrame(frame)
+                yield self.producer.encodeFrame(frame)
+
         # add the route to the Flask server
-        @self.server.route("/stream.mjpg")
+        @self.server.route("/hstack")
         def stream_mjpg_route():
-            return self.stream_mjpg()
+            return Response(
+                hstackGenerator(), mimetype="multipart/x-mixed-replace; boundary=frame")
 
         navbar = dbc.NavbarSimple(
             children=[
@@ -45,81 +73,50 @@ class StrikePointDashApp:
             dark=True,
         )
 
-        # layout: keep MJPEG src static, update stats with dcc.Interval
         self.app.layout = html.Div(
             [
                 navbar,
                 html.H3("Lepton Live (thermal)"),
-                html.Img(id="frame", src="/stream.mjpg",
-                         style={"width": "320", "height": "240"}),
-                dcc.Interval(id="interval", interval=200,
-                             n_intervals=0),  # 200 ms
-                html.Div(id="stats", style={
-                         "marginTop": "8px", "fontSize": "16px"})
+                html.Div(
+                    [
+                        html.Button("Start Recording",
+                                    id="start-rec-btn", n_clicks=0),
+                    ],
+                    style={"marginBottom": "8px"}
+                ),
+                html.Img(id="frame", src="/hstack",
+                         style={"width": "960", "height": "240"}),
             ],
             style={"textAlign": "center"},
         )
 
-        # callback to update only the stats text (closure captures self.producer)
-        @self.app.callback(
-            Output("stats", "children"),
-            Input("interval", "n_intervals")
-        )
-        def update_stats(n):
-            return self.update_stats(n)
-
-        # clean shutdown registration
-        atexit.register(self.shutdown)
-
-    def update_stats(self, n):
-        frame = self.producer.getLatestFrame()
-        if frame is None:
-            return "No frame yet"
-        return f"Min: {frame.min():.1f} °F   Max: {frame.max():.1f} °F"
-
-    # register MJPEG stream endpoint using a closure so it captures self.producer
-    def stream_mjpg(self):
-
-        def gen():
-            while True:
-                try:
-                    frame = self.producer.getLatestFrame()
-                    if frame is None:
-                        time.sleep(0.05)
-                        continue
-
-                    frame = cv2.normalize(
-                        frame, None, 50, 200, cv2.NORM_MINMAX).astype(np.uint8)
-                    frame = cv2.applyColorMap(frame, cv2.COLORMAP_HOT)
-
-                    ok, buf = cv2.imencode('.png', frame)
-                    if not ok:
-                        raise RuntimeError("Could not encode frame to PNG")
-
-                    part = (
-                        b"--frame\r\n"
-                        + b"Content-Type: image/png\r\n"
-                        + b"Content-Length: " +
-                        str(len(buf)).encode() + b"\r\n\r\n" +
-                        buf.tobytes() + b"\r\n"
-                    )
-                    yield part
-                    time.sleep(self.producer.interval)
-                except GeneratorExit:
-                    break
-                except Exception as ex:
-                    # log and keep trying; prevents the stream from dying silently
-                    print("stream_mjpg exception:", ex)
-                    time.sleep(0.5)
-
-        return Response(stream_with_context(gen()),
-                        mimetype="multipart/x-mixed-replace; boundary=frame")
+        # Dash callback to start recording when button pressed
+        @self.app.callback(Output("start-rec-btn", "children"),
+                           Input("start-rec-btn", "n_clicks"))
+        def on_start_record(n_clicks):
+            if not n_clicks:
+                return "Start Recording"
+            try:
+                with self.recLock:
+                    if not self.isRecording:
+                        self.isRecording = True
+                        self.recStream = open("recording.bin", "wb")
+                        return "Stop Recording"
+                    else:
+                        self.isRecording = False
+                        self.recStream.close()
+                        self.recStream = None
+                        return "Start Recording"
+            except Exception as ex:
+                return "Start Recording"
 
     def shutdown(self):
         try:
             self.producer.stop()
         except Exception:
             pass
+        return
+
     def run(self, host="0.0.0.0", port=8050, debug=False, threaded=True):
         # threaded=True helps keep the MJPEG stream and Dash callbacks responsive
         self.app.run(host=host, port=port, debug=debug, threaded=threaded)

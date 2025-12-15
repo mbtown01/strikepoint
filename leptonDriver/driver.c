@@ -220,15 +220,12 @@ int LEPDRV_Init(LEPDRV_SessionHandle *hndlPtr, LEPDRV_DriverInfo *info) {
     memset(&localSession, 0, sizeof(LEPDRV_Session));
     LEPDRV_Session *session = &localSession;
 
-    session->spiFd = open("/dev/spidev0.0", O_RDWR);
     session->tempUnit = LEPDRV_TEMP_UNITS_FAHRENHEIT;
     session->shutdownRequested = false;
     session->hasFrame = false;
     session->isRunning = false;
     session->logFile = stdout;
     session->threadRtn = 0;
-    if (session->spiFd < 0)
-        BAIL("Could not open SPI device");
 
     info->versionMajor = 1;
     info->versionMinor = 0;
@@ -253,12 +250,17 @@ int LEPDRV_StartPolling(LEPDRV_SessionHandle hndl) {
     if (session->isRunning)
         BAIL("Attempt to start already running polling thread");
 
-    LOG_DEBUG("Starting SPI polling thread");
+    LOG_INFO("LEPTON Driver Starting Up...");
 
     unsigned char spiMode = SPI_MODE_3;
     unsigned char spiBitsPerWord = 8;
     unsigned int spiSpeed = 10000000;
 
+    LOG_INFO("Configuring /def/spidev0.0: mode=%d, bitsPerWord=%d, speed=%d Hz",
+             spiMode, spiBitsPerWord, spiSpeed);
+    session->spiFd = open("/dev/spidev0.0", O_RDWR);
+    if (session->spiFd < 0)
+        BAIL("Could not open SPI device");
     BAIL_ON_FAILED_SYS(
         ioctl(session->spiFd, SPI_IOC_WR_MODE, &spiMode));
     BAIL_ON_FAILED_SYS(
@@ -273,6 +275,7 @@ int LEPDRV_StartPolling(LEPDRV_SessionHandle hndl) {
         ioctl(session->spiFd, SPI_IOC_RD_MAX_SPEED_HZ, &spiSpeed));
 
     // Initialize and open the camera port (example values)
+    LOG_INFO("Configuring camera port");
     session->portDesc.portType = LEP_CCI_TWI;
     session->portDesc.portID = 99;
     session->portDesc.deviceAddress = 0x2A;               // Example I2C address
@@ -288,36 +291,49 @@ int LEPDRV_StartPolling(LEPDRV_SessionHandle hndl) {
     BAIL_ON_FAILED_LEP(LEP_SetSysFfcShutterModeObj(&session->portDesc, ffcMode));
     usleep(200000); // Wait for a second to allow FFC to complete
 
-    LEP_SYS_AUX_TEMPERATURE_CELCIUS_T auxTemp;
-    LEP_GetSysAuxTemperatureCelcius(&session->portDesc, &auxTemp);
-    LOG_DEBUG("Starting aux temperature: %.2f F", auxTemp * 9.0f / 5.0f + 32.0f);
-
     BAIL_ON_FAILED_LEP(LEP_RunSysFFCNormalization(&session->portDesc));
     BAIL_ON_FAILED_LEP(
         LEP_SetOemVideoOutputEnable(&session->portDesc, LEP_OEM_ENABLE));
 
-    // Verify settings
+    // Show status some known interesting settings
+    LEP_SYS_FLIR_SERIAL_NUMBER_T serialNumber;
+    BAIL_ON_FAILED_LEP(LEP_GetSysFlirSerialNumber(&session->portDesc, &serialNumber));
+    LOG_INFO("STARTUP Camera Serial Number: %llu", (unsigned long long) serialNumber);
+
+    LEP_SYS_UPTIME_NUMBER_T upTime;
+    BAIL_ON_FAILED_LEP(LEP_GetSysCameraUpTime(&session->portDesc, &upTime));
+    LOG_INFO("STARTUP Camera Uptime: %u seconds", (unsigned int) (upTime));
+
+    LEP_SYS_AUX_TEMPERATURE_CELCIUS_T auxTemp;
+    LEP_GetSysAuxTemperatureCelcius(&session->portDesc, &auxTemp);
+    LOG_INFO("STARTUP aux temperature: %.2f F", auxTemp * 9.0f / 5.0f + 32.0f);
+
+    LEP_SYS_FPA_TEMPERATURE_CELCIUS_T fpaTemp;
+    BAIL_ON_FAILED_LEP(LEP_GetSysFpaTemperatureCelcius(&session->portDesc, &fpaTemp));
+    LOG_INFO("STARTUP FPA Temperature: %.2f F", fpaTemp * 9.0f / 5.0f + 32.0f);
+
     LEP_RAD_ENABLE_E radState;
-    LEP_AGC_ENABLE_E agcState;
-    LEP_STATUS_T statusDesc;
-
     LEP_GetRadEnableState(&session->portDesc, &radState);
-    LEP_GetAgcEnableState(&session->portDesc, &agcState);
-    BAIL_ON_FAILED_LEP(LEP_GetSysStatus(&session->portDesc, &statusDesc));
+    LOG_INFO("STARTUP Radiometry enabled: %d", radState);
 
-    LOG_DEBUG("Camera status: %d", statusDesc.camStatus);
-    LOG_DEBUG("Command count: %d", statusDesc.commandCount);
-    LOG_DEBUG("Radiometry enabled: %d", radState);
-    LOG_DEBUG("AGC enabled: %d", agcState);
+    LEP_AGC_ENABLE_E agcState;
+    LEP_GetAgcEnableState(&session->portDesc, &agcState);
+    LOG_INFO("STARTUP AGC enabled: %d", agcState);
+
+    LEP_STATUS_T statusDesc;
+    BAIL_ON_FAILED_LEP(LEP_GetSysStatus(&session->portDesc, &statusDesc));
+    LOG_INFO("STARTUP Camera status: %d", statusDesc.camStatus);
+    LOG_INFO("STARTUP Command count: %d", statusDesc.commandCount);
 
     // Kickoff the driver thread
+    LOG_INFO("STARTUP COMPLETE, starting frame capture thread");
     BAIL_ON_FAILED_SYS(pthread_mutex_init(&session->mutex, NULL));
     BAIL_ON_FAILED_SYS(pthread_cond_init(&session->cond, NULL));
     BAIL_ON_FAILED_SYS(pthread_create(
         &session->thread, NULL, _spiPollingThreadMain, (void *) session));
 
     // Sync with thread before returning
-    for( int i=0; i<1000 && !session->isRunning; i++)
+    for (int i = 0; i < 1000 && !session->isRunning; i++)
         usleep(1000);
     if (!session->isRunning)
         BAIL("Somehow the polling thread never started");
