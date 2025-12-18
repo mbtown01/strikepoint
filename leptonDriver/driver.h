@@ -22,7 +22,9 @@ typedef enum {
 
 // Create a new session
 int LEPDRV_Init(
-    LEPDRV_SessionHandle *hndlPtr, LEPDRV_DriverInfo *info);
+    LEPDRV_SessionHandle *hndlPtr,
+    LEPDRV_DriverInfo *info,
+    const char *logFilePath);
 
 // Start the SPI polling thread
 int LEPDRV_StartPolling(LEPDRV_SessionHandle hndl);
@@ -31,7 +33,7 @@ int LEPDRV_StartPolling(LEPDRV_SessionHandle hndl);
 int LEPDRV_CheckIsRunning(
     LEPDRV_SessionHandle *hndlPtr, bool *isRunning);
 
-    // disable the camera and put it into power down mode
+// disable the camera and put it into power down mode
 int LEPDRV_CameraDisable(LEPDRV_SessionHandle hndl);
 
 // enable the camera

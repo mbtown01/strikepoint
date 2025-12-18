@@ -77,7 +77,7 @@ int main(int argc, char *argv[]) {
 
     LEPDRV_DriverInfo driverInfo;
     LEPDRV_SessionHandle hndl;
-    if (0 != LEPDRV_Init(&hndl, &driverInfo)) {
+    if (0 != LEPDRV_Init(&hndl, &driverInfo, NULL)) {
         fprintf(stderr, "Error initializing Lepton driver\n");
         exit(1);
     }

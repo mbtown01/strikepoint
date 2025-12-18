@@ -26,7 +26,8 @@ def find_library_path(name_hint="libleptonDriver.so"):
     for p in candidates:
         if p and os.path.exists(p):
             return p
-    return None
+    raise OSError(
+        "Could not locate Lepton SDK shared library; pass libpath explicitly")
 
 
 class LeptonDriver:
@@ -52,13 +53,8 @@ class LeptonDriver:
         "LEPDRV_SetTemperatureUnits", "LEPDRV_CheckIsRunning",
         "LEPDRV_SetLogFile", "LEPDRV_StartPolling"]
 
-    def __init__(self, libPath=None):
-        if libPath is None:
-            libPath = find_library_path()
-            if libPath is None:
-                raise OSError(
-                    "Could not locate Lepton SDK shared library; pass libpath explicitly")
-
+    def __init__(self, logPath: str = None):
+        libPath = find_library_path()
         lib = ctypes.CDLL(libPath)
 
         self.fnMap = dict()
@@ -71,7 +67,8 @@ class LeptonDriver:
 
         self.fnMap["LEPDRV_Init"].argtypes = [
             ctypes.POINTER(ctypes.c_void_p),
-            ctypes.POINTER(LeptonDriver.LEPDRV_DriverInfo)]
+            ctypes.POINTER(LeptonDriver.LEPDRV_DriverInfo),
+            ctypes.c_char_p]
         self.fnMap["LEPDRV_GetFrame"].argtypes = [
             ctypes.c_void_p, ctypes.POINTER(ctypes.c_float)]
         self.fnMap["LEPDRV_SetTemperatureUnits"].argtypes = [
@@ -84,7 +81,8 @@ class LeptonDriver:
         info = LeptonDriver.LEPDRV_DriverInfo()
         self.hndl = ctypes.c_void_p()
         rc = self.fnMap["LEPDRV_Init"](
-            ctypes.byref(self.hndl), ctypes.byref(info))
+            ctypes.byref(self.hndl), ctypes.byref(info), 
+            ctypes.c_char_p(logPath.encode('utf8') if logPath else None))
         if rc != 0:
             raise RuntimeError(f"LEPDRV_Init failed rc={rc}")
 

@@ -1,13 +1,13 @@
-import cv2
-import numpy as np
 import dash_bootstrap_components as dbc
+import numpy as np
+import cv2
 
-from struct import pack
 from flask import Response, stream_with_context
 from dash import Dash, html, dcc
 from dash.dependencies import Input, Output
 from strikepoint.producer import FrameProducer
 from strikepoint.driver import LeptonDriver
+from strikepoint.frames import FrameInfoWriter, FrameInfo
 from picamera2 import Picamera2
 from threading import Lock
 
@@ -15,37 +15,27 @@ from threading import Lock
 class StrikePointDashApp:
 
     def __init__(self, interval=0.1):
-        self.app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+        self.app = Dash(__name__, external_stylesheets=[dbc.themes.SLATE])
 
         self.server = self.app.server  # Flask server used for the stream route
-        self.driver = LeptonDriver()
-        self.driver.setLogFile('dashApp.log')
+        self.driver = LeptonDriver('dashApp.log')
         self.driver.startPolling()
         self.picam = Picamera2()
+        self.picam.start()
 
         self.producer = FrameProducer(self.driver, self.picam)
-        self.isRecording = False
-        self.recStream = None
-        self.recLock = Lock()
-
-        self.register_callbacks()
-
-    def register_callbacks(self):
+        self.frameWriter = None
+        self.frameWriterLock = Lock()
 
         def hstackGenerator():
             while True:
-                frame = self.producer.getFrame()
-                with self.recLock:
-                    if self.recStream is not None:
-                        success, encoded = cv2.imencode(".png", frame)
-                        if not success:
-                            raise RuntimeError("Image encoding failed")
-
-                        data = encoded.tobytes()
-                        self.recStream.write(pack(">I", len(data)))
-                        self.recStream.write(data)
-                encoded = self.producer.encodeFrame(frame)
-                yield self.producer.encodeFrame(frame)
+                frameInfo = self.producer.getFrameInfo()
+                frame = np.hstack((frameInfo.rgbFrames['visual'], 
+                                   frameInfo.rgbFrames['thermal']))
+                with self.frameWriterLock:
+                    if self.frameWriter is not None:
+                        self.frameWriter.writeFrameInfo(frameInfo)
+                yield self.encodeFrame(frame)
 
         # add the route to the Flask server
         @self.server.route("/hstack")
@@ -97,18 +87,24 @@ class StrikePointDashApp:
             if not n_clicks:
                 return "Start Recording"
             try:
-                with self.recLock:
-                    if not self.isRecording:
-                        self.isRecording = True
-                        self.recStream = open("recording.bin", "wb")
+                with self.frameWriterLock:
+                    if self.frameWriter is None:
+                        self.frameWriter = FrameInfoWriter("recording.bin")
                         return "Stop Recording"
                     else:
-                        self.isRecording = False
-                        self.recStream.close()
-                        self.recStream = None
+                        self.frameWriter.close()
+                        self.frameWriter = None
                         return "Start Recording"
             except Exception as ex:
                 return "Start Recording"
+
+    def encodeFrame(self, frame: np.ndarray) -> bytes:
+        ok, encoded = cv2.imencode(".jpg", frame)
+        if not ok:
+            raise RuntimeError("Failed to encode frame")
+        return b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + \
+            encoded.tobytes() + b"\r\n"
+
 
     def shutdown(self):
         try:
