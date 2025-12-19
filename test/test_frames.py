@@ -15,30 +15,35 @@ class FrameInfoTests(unittest.TestCase):
         return img
 
     def test_write_and_read_single_frame(self):
-        thermal = (np.arange(80 * 60, dtype=np.float32)
-                   * 0.1).astype(np.float32)
-        img = self.makeColorImage(160, 120, color=(10, 20, 30))
-        frameInfo = FrameInfo(timestamp=1234.5)
-        frameInfo.rawFrames['thermal'] = thermal
-        frameInfo.rgbFrames["hstack"] = img
-        frameInfo.metadata = {"frame_index": 1}
+        thermal = 0.1 * np.arange(80 * 60, dtype=np.float32).astype(np.float32)
+        thermal = thermal.reshape((60, 80))
+        visual = self.makeColorImage(160, 120, color=(10, 20, 30))
+        frameInfoOut = FrameInfo(timestamp=1234.5)
+        frameInfoOut.rawFrames['thermal'] = thermal
+        frameInfoOut.rgbFrames["hstack"] = visual
+        frameInfoOut.metadata = {"frame_index": 1}
 
         # write/read a frameInfo using temporary file
         with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tf:
             with FrameInfoWriter(tf.name) as writer:
-                writer.writeFrameInfo(frameInfo)
+                writer.writeFrameInfo(frameInfoOut)
             with FrameInfoReader(tf.name) as reader:
-                got = reader.readFrameInfo()
+                frameInfoIn = reader.readFrameInfo()
 
-        self.assertIsNotNone(got)
-        self.assertEqual(got.timestamp, frameInfo.timestamp)
-        self.assertTrue(np.array_equal(got.rawFrames['thermal'], thermal.ravel()))
-        self.assertIn("hstack", got.rgbFrames)
-        got_img = got.rgbFrames["hstack"]
+        self.assertIsNotNone(frameInfoIn)
+        self.assertEqual(frameInfoIn.timestamp, frameInfoOut.timestamp)
+        self.assertEqual(frameInfoIn.metadata.get("frame_index"), 1)
+
+        self.assertIn("thermal", frameInfoIn.rawFrames)
+        got_img = frameInfoIn.rawFrames["thermal"]
+        self.assertEqual(got_img.shape, thermal.shape)
+        self.assertTrue(np.array_equal(got_img, thermal))
+
+        self.assertIn("hstack", frameInfoIn.rgbFrames)
+        got_img = frameInfoIn.rgbFrames["hstack"]
         self.assertEqual(got_img.dtype, np.uint8)
-        self.assertEqual(got_img.shape, img.shape)
-        self.assertTrue(np.array_equal(got_img, img))
-        self.assertEqual(got.metadata.get("frame_index"), 1)
+        self.assertEqual(got_img.shape, visual.shape)
+        self.assertTrue(np.array_equal(got_img, visual))
 
     def test_context_manager_and_multiple_frames(self):
         thermal1 = np.ones(80 * 60, dtype=np.float32) * 3.14

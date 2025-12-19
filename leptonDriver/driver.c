@@ -477,7 +477,7 @@ int LEPDRV_SetLogFile(LEPDRV_SessionHandle hndl, char *logFilePath) {
     else if (strncmp(logFilePath, "stderr", 6) == 0)
         session->logFile = stderr;
     else {
-        FILE *newLogFile = fopen(logFilePath, "a");
+        FILE *newLogFile = fopen(logFilePath, "w");
         if (newLogFile == NULL) {
             LOG_ERROR("Could not open log file %s", logFilePath);
             rtn = -1;

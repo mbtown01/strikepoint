@@ -27,7 +27,7 @@ class FrameInfoWriter:
         self.file.write(pack(">I", self.formatVersion))
 
     def writeFrameInfo(self, frameInfo: FrameInfo):
-        outputMap = dict(mapVersion=2,
+        outputMap = dict(mapVersion=3,
                          timestamp=frameInfo.timestamp,
                          rgbFrames=dict(), rawFrames=dict(),
                          metadata=frameInfo.metadata)
@@ -37,7 +37,14 @@ class FrameInfoWriter:
                 raise RuntimeError(f"Failed to encode frame for key {key}")
             outputMap['rgbFrames'][key] = encoded.tobytes()
         for key, value in frameInfo.rawFrames.items():
-            outputMap['rawFrames'][key] = value.tobytes()
+            if not isinstance(value, np.ndarray):
+                raise RuntimeError(f"rawFrames[{key}] must be a numpy array")
+            # store shape and dtype so reader can reconstruct the array
+            outputMap['rawFrames'][key] = {
+                "shape": list(value.shape),
+                "dtype": str(value.dtype),
+                "bytes": value.tobytes()
+            }
 
         frame = packb(outputMap)
         self.file.write(pack(">I", len(frame)))
@@ -60,21 +67,24 @@ class FrameInfoReader:
         header = self.file.read(len(_HEADER_MAGIC_STR))
         if header != _HEADER_MAGIC_STR:
             raise RuntimeError("Invalid file format")
-        (self.formatVersion,) = unpack(">I", self.file.read(4))
+        (formatVersion,) = unpack(">I", self.file.read(4))
+        if formatVersion not in (1, 2):
+            raise RuntimeError(
+                f"Unsupported file format version {formatVersion}")
 
     def readFrameInfo(self) -> np.ndarray:
         header = self.file.read(4)
         if not header:
-            return None  # End of stream
+            return None
 
         (size,) = unpack(">I", header)
-        data = self.file.read(size)
-        if len(data) != size:
+        fileData = self.file.read(size)
+        if len(fileData) != size:
             raise EOFError("Unexpected end of stream")
-        inputMap = unpackb(data)
+        inputMap = unpackb(fileData)
         frameInfo = FrameInfo(inputMap['timestamp'])
 
-        if inputMap['mapVersion'] in (1, 2):
+        if inputMap['mapVersion'] == 3:
             frameInfo.metadata = inputMap['metadata']
             if inputMap['mapVersion'] == 1:
                 inputMap['rawFrames'] = dict(
@@ -84,12 +94,14 @@ class FrameInfoReader:
                 frame = cv2.imdecode(encoded, cv2.IMREAD_UNCHANGED)
                 frameInfo.rgbFrames[key] = frame
             for key, data in inputMap['rawFrames'].items():
-                frameInfo.rawFrames[key] = np.frombuffer(data, dtype=np.float32)
+                dtype = np.dtype(data['dtype'])
+                arr = np.frombuffer(data['bytes'], dtype=dtype)
+                shape = tuple(data.get('shape', (arr.size,)))
+                frameInfo.rawFrames[key] = arr.reshape(shape)
             return frameInfo
 
-        raise RuntimeError(
-            f"Unsupported frame info map version "
-            f"{inputMap['mapVersion']}")
+        raise RuntimeError(f"Unsupported frame info map version "
+                           f"{inputMap['mapVersion']}")
 
     def readAllFrameInfo(self) -> list[np.ndarray]:
         frameInfoList = []

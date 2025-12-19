@@ -1,19 +1,11 @@
-
-import time
 import threading
 import cv2
 import numpy as np
 
-import argparse
-
-from picamera2 import Picamera2
-from time import sleep, monotonic
-from flask import Flask, Response
-from strikepoint.driver import LeptonDriver
-from strikepoint.frames import FrameInfo
+from time import monotonic
 from logging import getLogger
-from time import sleep
 from queue import Queue
+from strikepoint.frames import FrameInfo
 
 
 class FrameProducer:
@@ -29,6 +21,8 @@ class FrameProducer:
         self.thread = threading.Thread(target=self._threadMain, daemon=True)
         self.thread.start()
         self.cmapPoints = None
+        self.imageWidth = 320
+        self.imageHeight = 240
 
     @staticmethod
     def findTargetCircleCount(frame, targetCount):
@@ -72,45 +66,26 @@ class FrameProducer:
             try:
                 startTime = monotonic()
                 frameInfo = FrameInfo(startTime)
-                t1 = monotonic()
                 frameInfo.rawFrames['thermal'] = self.driver.getFrame()
-                t2 = monotonic()
                 frameInfo.rawFrames['visual'] = self.picam.capture_array()
-                print(f"thermal={t2-t1:.3f}s, visual={monotonic()-t2:.3f}s")
-                self.frameInfoQueue.put(frameInfo, block=True)
-
-                elapsed = monotonic() - startTime
-                print(f"{elapsed} qsize={self.frameInfoQueue.qsize()}")
-            except Exception as ex:
-                getLogger().error(f"FrameProducer thread exception: {ex}")
-
-    def _getFrameInfo(self):
-        imageWidth, imageHeight = 320, 240
-
-        while True:
-            try:
-                frameInfo = self.frameInfoQueue.get(timeout=10)
-                self.frameInfoQueue.task_done()
-                thermalRaw = frameInfo.rawFrames['thermal']
-                visualRaw = frameInfo.rawFrames['visual']
 
                 ############################################################
                 # Process visual frame
-                frame = visualRaw
+                frame = frameInfo.rawFrames['visual']
                 frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
                 frame = cv2.rotate(frame, cv2.ROTATE_180)
                 frame = cv2.flip(frame, 0)
                 frame = cv2.flip(frame, 1)
-                frame = cv2.resize(frame, (imageWidth, imageHeight),
+                frame = cv2.resize(frame, (self.imageWidth, self.imageHeight),
                                    interpolation=cv2.INTER_NEAREST)
                 frameInfo.rgbFrames['visual'] = frame
 
                 ############################################################
                 # Process thermal frame
-                frame = thermalRaw
+                frame = frameInfo.rawFrames['thermal']
                 frame = cv2.flip(frame, 0)
                 frame = cv2.flip(frame, 1)
-                frame = cv2.resize(frame, (imageWidth, imageHeight),
+                frame = cv2.resize(frame, (self.imageWidth, self.imageHeight),
                                    interpolation=cv2.INTER_NEAREST)
                 frame = cv2.normalize(
                     frame, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
@@ -126,19 +101,19 @@ class FrameProducer:
                 try:
                     visFrame, visCircles = \
                         FrameProducer.findTargetCircleCount(frame, 1)
-                    frameInfo.metadata['hasBall'] = True
-                    frameInfo.rgbFrames['visualWithCircles'] = visFrame
+                    frameInfo.rgbFrames['visualBall'] = visFrame
                 except RuntimeError:
-                    # TODO: if we saw a ball at frameInfoHistory[0], assume it's
-                    # been hit and look for a patch of high temp in thermal
-                    frameInfo.metadata['hasBall'] = False
-                yield frameInfo
+                    pass
+
+                self.frameInfoQueue.put(frameInfo, block=True)
 
             except Exception as ex:
                 getLogger().error(f"FrameProducer thread exception: {ex}")
 
     def getFrameInfo(self):
-        return next(self._getFrameInfo())
+        frameInfo = self.frameInfoQueue.get(timeout=10)
+        self.frameInfoQueue.task_done()
+        return frameInfo
 
     def stop(self):
         self.shutdownRequested = True
