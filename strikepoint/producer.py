@@ -20,46 +20,9 @@ class FrameProducer:
         self.shutdownRequested = False
         self.thread = threading.Thread(target=self._threadMain, daemon=True)
         self.thread.start()
-        self.cmapPoints = None
         self.imageWidth = 320
         self.imageHeight = 240
 
-    @staticmethod
-    def findTargetCircleCount(frame, targetCount):
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        frame = cv2.medianBlur(frame, 5)
-        overallMeanVal = cv2.mean(frame)[0]
-        circles = cv2.HoughCircles(
-            frame, cv2.HOUGH_GRADIENT_ALT, dp=1.2, minDist=30, param1=100,
-            param2=0.8, minRadius=10, maxRadius=50)
-
-        if circles is None:
-            raise RuntimeError("No circles found")
-
-        intensityCircleList = list()
-        circles = np.round(circles[0]).astype(int)
-        for (x, y, r) in circles:
-            mask = np.zeros(frame.shape, dtype=np.uint8)
-            cv2.circle(mask, (x, y), r, 255, -1)
-            meanVal = cv2.mean(frame, mask=mask)[0]
-            if meanVal > overallMeanVal*1.5:
-                intensityCircleList.append((meanVal, (x, y, r)))
-
-        intensityCircleList.sort(key=lambda t: t[0], reverse=True)
-        vis = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-        for meanVal, (x, y, r) in intensityCircleList[:targetCount]:
-            cv2.circle(vis, (x, y), r, (0, 255, 0), 2)
-            cv2.circle(vis, (x, y), 2, (0, 0, 255), 3)
-        for meanVal, (x, y, r) in intensityCircleList[targetCount:]:
-            cv2.circle(vis, (x, y), r, (255, 128, 128), 1)
-            cv2.circle(vis, (x, y), 2, (0, 0, 255), 3)
-
-        if len(intensityCircleList) < targetCount:
-            raise RuntimeError(
-                f"Only found {len(intensityCircleList)} valid circles, "
-                f"needed {targetCount}")
-
-        return vis, list(a[1] for a in intensityCircleList[:targetCount])
 
     def _threadMain(self):
         while not self.shutdownRequested:
