@@ -8,14 +8,22 @@ from queue import Queue
 from strikepoint.frames import FrameInfo
 
 
+class FrameProvider:
+
+    def getFrame(self):
+        raise NotImplementedError()
+
+
 class FrameProducer:
     """Background thread capturing frames and keeping the latest PNG bytes
     and min/max temperatures.
     """
 
-    def __init__(self, driver, picam):
-        self.driver = driver
-        self.picam = picam
+    def __init__(self, 
+                 thermalFrameProvider: FrameProvider, 
+                 visualFrameProvider: FrameProvider):
+        self.thermalFrameProvider = thermalFrameProvider
+        self.visualFrameProvider = visualFrameProvider
         self.frameInfoQueue = Queue(maxsize=4)
         self.shutdownRequested = False
         self.thread = threading.Thread(target=self._threadMain, daemon=True)
@@ -23,22 +31,24 @@ class FrameProducer:
         self.imageWidth = 320
         self.imageHeight = 240
 
-
     def _threadMain(self):
         while not self.shutdownRequested:
             try:
                 startTime = monotonic()
                 frameInfo = FrameInfo(startTime)
-                frameInfo.rawFrames['thermal'] = self.driver.getFrame()
-                frameInfo.rawFrames['visual'] = self.picam.capture_array()
+                frameInfo.rawFrames['thermal'] = \
+                    self.thermalFrameProvider.getFrame()
+                frameInfo.rawFrames['visual'] = \
+                    self.visualFrameProvider.getFrame()
 
                 ############################################################
                 # Process visual frame
                 frame = frameInfo.rawFrames['visual']
-                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                frame = cv2.rotate(frame, cv2.ROTATE_180)
-                frame = cv2.flip(frame, 0)
-                frame = cv2.flip(frame, 1)
+                # TODO: Remove once we confirm rpi entry point app is working
+                # frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                # frame = cv2.rotate(frame, cv2.ROTATE_180)
+                # frame = cv2.flip(frame, 0)
+                # frame = cv2.flip(frame, 1)
                 frame = cv2.resize(frame, (self.imageWidth, self.imageHeight),
                                    interpolation=cv2.INTER_NEAREST)
                 frameInfo.rgbFrames['visual'] = frame
@@ -58,15 +68,6 @@ class FrameProducer:
                 ############################################################
                 # Maybe we have a mode where we're either calibrating or
                 # we're looking for the ball?
-
-                ############################################################
-                # Look for a ball
-                try:
-                    visFrame, visCircles = \
-                        FrameProducer.findTargetCircleCount(frame, 1)
-                    frameInfo.rgbFrames['visualBall'] = visFrame
-                except RuntimeError:
-                    pass
 
                 self.frameInfoQueue.put(frameInfo, block=True)
 

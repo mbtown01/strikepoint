@@ -64,6 +64,10 @@ class FrameInfoReader:
 
     def __init__(self, fileName: str):
         self.file = open(fileName, "rb")
+        self.rewind()
+        
+    def rewind(self):
+        self.file.seek(0)
         header = self.file.read(len(_HEADER_MAGIC_STR))
         if header != _HEADER_MAGIC_STR:
             raise RuntimeError("Invalid file format")

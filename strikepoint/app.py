@@ -6,24 +6,17 @@ from flask import Response, stream_with_context
 from dash import Dash, html, dcc
 from dash.dependencies import Input, Output
 from strikepoint.producer import FrameProducer
-from strikepoint.driver import LeptonDriver
 from strikepoint.frames import FrameInfoWriter, FrameInfo
-from picamera2 import Picamera2
 from threading import Lock
 
 
 class StrikePointDashApp:
 
-    def __init__(self, interval=0.1):
+    def __init__(self, producer: FrameProducer):
         self.app = Dash(__name__, external_stylesheets=[dbc.themes.SLATE])
 
         self.server = self.app.server  # Flask server used for the stream route
-        self.driver = LeptonDriver('dashApp.log')
-        self.driver.startPolling()
-        self.picam = Picamera2()
-        self.picam.start()
-
-        self.producer = FrameProducer(self.driver, self.picam)
+        self.producer = producer
         self.frameWriter = None
         self.frameWriterLock = Lock()
 
@@ -119,5 +112,5 @@ class StrikePointDashApp:
 
 
 if __name__ == "__main__":
-    app_instance = StrikePointDashApp(interval=0.1)
+    app_instance = StrikePointDashApp()
     app_instance.run()

@@ -5,17 +5,17 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Web app",
+            "name": "Web app (laptop)",
             "type": "debugpy",
             "request": "launch",
-            "program": "app.py",
+            "program": "main-laptop.py",
             "console": "internalConsole"
         },
         {
-            "name": "Flask Video Producer",
+            "name": "Web app (raspberry pi)",
             "type": "debugpy",
             "request": "launch",
-            "module": "strikepoint.producer",
+            "program": "main-rpi.py",
             "console": "internalConsole"
         },
         {

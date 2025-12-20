@@ -3,37 +3,13 @@ import os
 import ctypes.util
 import numpy as np
 
+from strikepoint.producer import FrameProvider
 from enum import IntEnum
 
-# Define a ctypes Structure that mirrors the new LEPDRV_DriverInfo type.
-# Keep fields minimal and backward-compatible; we set the size before calling
-# LEPDRV_Init so the native side can detect the structure version.
 
-
-def find_library_path(name_hint="libleptonDriver.so"):
-    """Search common locations for the SDK shared library; return path or None."""
-    candidates = [
-        os.path.join(os.getcwd(), f"leptonDriver/Release/{name_hint}"),
-        os.path.join(os.getcwd(), f"leptonDriver/Debug/{name_hint}"),
-        f"/usr/local/lib/{name_hint}",
-        f"/usr/lib/{name_hint}",
-    ]
-    # try ldconfig lookup as well
-    ld = ctypes.util.find_library(
-        name_hint.replace("lib", "").replace(".so", ""))
-    if ld:
-        candidates.insert(0, ld)
-    for p in candidates:
-        if p and os.path.exists(p):
-            return p
-    raise OSError(
-        "Could not locate Lepton SDK shared library; pass libpath explicitly")
-
-
-class LeptonDriver:
+class LeptonDriver(FrameProvider):
     """ctypes wrapper around LEPDRV_* functions from the C driver.
     """
-
     class TemperatureUnit(IntEnum):
         KELVIN = 0
         CELCIUS = 1
@@ -54,7 +30,7 @@ class LeptonDriver:
         "LEPDRV_SetLogFile", "LEPDRV_StartPolling"]
 
     def __init__(self, logPath: str = None):
-        libPath = find_library_path()
+        libPath = LeptonDriver.find_library_path()
         lib = ctypes.CDLL(libPath)
 
         self.fnMap = dict()
@@ -81,14 +57,13 @@ class LeptonDriver:
         info = LeptonDriver.LEPDRV_DriverInfo()
         self.hndl = ctypes.c_void_p()
         rc = self.fnMap["LEPDRV_Init"](
-            ctypes.byref(self.hndl), ctypes.byref(info), 
+            ctypes.byref(self.hndl), ctypes.byref(info),
             ctypes.c_char_p(logPath.encode('utf8') if logPath else None))
         if rc != 0:
             raise RuntimeError(f"LEPDRV_Init failed rc={rc}")
 
         self.frameWidth = info.framwidth
         self.frameHeight = info.frameHeight
-        # self.setLogFile("/dev/null")
 
     def _makeApiCall(self, fnName: str, *args):
         if fnName not in self.allFnNameList:
@@ -101,6 +76,13 @@ class LeptonDriver:
         """Start the SPI poling thread.
         """
         self._makeApiCall("LEPDRV_StartPolling")
+
+    def getFrame(self):
+        """Get a single frame from the driver."""
+        buf = np.empty(self.frameWidth * self.frameHeight, dtype=np.float32)
+        buf_ptr = buf.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+        self._makeApiCall("LEPDRV_GetFrame", buf_ptr)
+        return buf.reshape((self.frameHeight, self.frameWidth))
 
     def shutdown(self):
         """Shutdown the driver.
@@ -135,14 +117,27 @@ class LeptonDriver:
         """
         self._makeApiCall("LEPDRV_CameraDisable")
 
-    def getFrame(self):
-        """Get a single frame from the driver."""
-        buf = np.empty(self.frameWidth * self.frameHeight, dtype=np.float32)
-        buf_ptr = buf.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
-        self._makeApiCall("LEPDRV_GetFrame", buf_ptr)
-        return buf.reshape((self.frameHeight, self.frameWidth))
-
+    @staticmethod
+    def find_library_path(name_hint="libleptonDriver.so"):
+        """Search common locations for the SDK shared library; return path or None."""
+        candidates = [
+            os.path.join(os.getcwd(), f"leptonDriver/Release/{name_hint}"),
+            os.path.join(os.getcwd(), f"leptonDriver/Debug/{name_hint}"),
+            f"/usr/local/lib/{name_hint}",
+            f"/usr/lib/{name_hint}",
+        ]
+        # try ldconfig lookup as well
+        ld = ctypes.util.find_library(
+            name_hint.replace("lib", "").replace(".so", ""))
+        if ld:
+            candidates.insert(0, ld)
+        for p in candidates:
+            if p and os.path.exists(p):
+                return p
+        raise OSError(
+            "Could not locate Lepton SDK shared library; pass libpath explicitly")
     # convenience context manager
+
     def __enter__(self):
         return self
 
