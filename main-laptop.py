@@ -1,3 +1,5 @@
+import cv2
+
 from threading import Thread
 from time import sleep, monotonic
 from strikepoint.frames import FrameInfoReader
@@ -36,10 +38,11 @@ class FileBasedDriver:
                     durationDelta = fileDuration - localDuration
                     if durationDelta > 0:
                         sleep(durationDelta)
-                    self.frameQueueMap['visual'].put(
-                        fileInfo.rgbFrames['visual'])
-                    self.frameQueueMap['thermal'].put(
-                        fileInfo.rawFrames['thermal'])
+                    visualFrame = fileInfo.rgbFrames['visual']
+                    thermalFrame = fileInfo.rawFrames['thermal']
+                    thermalFrame = cv2.rotate(thermalFrame, cv2.ROTATE_180)
+                    self.frameQueueMap['visual'].put(visualFrame)
+                    self.frameQueueMap['thermal'].put(thermalFrame)
                     fileInfo = self.reader.readFrameInfo()
 
                 except Exception as ex:

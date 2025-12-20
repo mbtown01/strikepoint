@@ -3,14 +3,15 @@ import cv2
 from strikepoint.app import StrikePointDashApp
 from strikepoint.producer import FrameProducer, FrameProvider
 from strikepoint.driver import LeptonDriver
-from picamera2 import Picamera
+from picamera2 import Picamera2
 
 
 class PicameraFrameProvider(FrameProvider):
 
     def __init__(self):
         super().__init__()
-        self.picamera = Picamera()
+        self.picamera = Picamera2()
+        self.picamera.start()
 
     def getFrame(self):
         # Specialize here and convert the image to the expected 
@@ -20,6 +21,21 @@ class PicameraFrameProvider(FrameProvider):
         frame = cv2.rotate(frame, cv2.ROTATE_180)
         frame = cv2.flip(frame, 0)
         frame = cv2.flip(frame, 1)
+        return frame
+
+class LeptonFrameProvider(FrameProvider):
+
+    def __init__(self):
+        super().__init__()
+        self.leptonDriver = LeptonDriver()
+        self.leptonDriver.setLogFile('app.log')
+        self.leptonDriver.startPolling()
+
+    def getFrame(self):
+        frame = self.leptonDriver.getFrame()
+        frame = cv2.flip(frame, 0)
+        frame = cv2.flip(frame, 1)
+        return frame
 
 
 if __name__ == "__main__":

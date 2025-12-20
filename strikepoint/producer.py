@@ -44,11 +44,6 @@ class FrameProducer:
                 ############################################################
                 # Process visual frame
                 frame = frameInfo.rawFrames['visual']
-                # TODO: Remove once we confirm rpi entry point app is working
-                # frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                # frame = cv2.rotate(frame, cv2.ROTATE_180)
-                # frame = cv2.flip(frame, 0)
-                # frame = cv2.flip(frame, 1)
                 frame = cv2.resize(frame, (self.imageWidth, self.imageHeight),
                                    interpolation=cv2.INTER_NEAREST)
                 frameInfo.rgbFrames['visual'] = frame
@@ -56,8 +51,6 @@ class FrameProducer:
                 ############################################################
                 # Process thermal frame
                 frame = frameInfo.rawFrames['thermal']
-                frame = cv2.flip(frame, 0)
-                frame = cv2.flip(frame, 1)
                 frame = cv2.resize(frame, (self.imageWidth, self.imageHeight),
                                    interpolation=cv2.INTER_NEAREST)
                 frame = cv2.normalize(
@@ -68,7 +61,6 @@ class FrameProducer:
                 ############################################################
                 # Maybe we have a mode where we're either calibrating or
                 # we're looking for the ball?
-
                 self.frameInfoQueue.put(frameInfo, block=True)
 
             except Exception as ex:
