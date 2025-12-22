@@ -9,14 +9,16 @@
             "type": "debugpy",
             "request": "launch",
             "program": "main-laptop.py",
-            "console": "internalConsole"
+            "console": "internalConsole",
+            "cwd": "${workspaceFolder}"
         },
         {
             "name": "Web app (raspberry pi)",
             "type": "debugpy",
             "request": "launch",
             "program": "main-rpi.py",
-            "console": "internalConsole"
+            "console": "internalConsole",
+            "cwd": "${workspaceFolder}"
         },
         {
             "name": "capture",

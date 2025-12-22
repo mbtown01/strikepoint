@@ -16,11 +16,12 @@ class FileBasedDriver:
     """A fake thermal driver that reads frames from a binary file.
     """
 
-    def __init__(self, fileName: str):
+    def __init__(self, fileName: str, timestampScale: float = 1.0):
         self.reader = FrameInfoReader(fileName)
         self.frameQueueMap = \
             {a: Queue(maxsize=4) for a in ['visual', 'thermal']}
         self.shutdownRequested = False
+        self.timestampScale = timestampScale
         self.thread = Thread(target=self._threadMain, daemon=True)
         self.thread.start()
 
@@ -29,12 +30,12 @@ class FileBasedDriver:
             self.reader.rewind()
             fileInfo = self.reader.readFrameInfo()
             baseTimestampLocal = monotonic()
-            baesTimestampFile = fileInfo.timestamp
+            baseTimestampFile = fileInfo.timestamp * self.timestampScale
 
             while fileInfo is not None:
                 try:
                     localDuration = monotonic() - baseTimestampLocal
-                    fileDuration = fileInfo.timestamp - baesTimestampFile
+                    fileDuration = (fileInfo.timestamp * self.timestampScale - baseTimestampFile)
                     durationDelta = fileDuration - localDuration
                     if durationDelta > 0:
                         sleep(durationDelta)
@@ -72,7 +73,7 @@ class FileBasedFrameProvider(FrameProvider):
 
 
 if __name__ == "__main__":
-    fileDriver = FileBasedDriver('dev/data/demo-three-balls.bin')
+    fileDriver = FileBasedDriver('dev/data/demo-combined.bin', timestampScale=0.2)
     thermalFrameProducer = FileBasedFrameProvider('thermal', fileDriver)
     visualFrameProducer = FileBasedFrameProvider('visual', fileDriver)
     producer = FrameProducer(thermalFrameProducer, visualFrameProducer)

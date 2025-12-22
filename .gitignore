@@ -1,3 +1,10 @@
+# Strikepoint-specific stuff
+leptonDriver/Release
+leptonDriver/Debug
+*.log
+*.db
+*.bin
+
 # Mac-specific
 .DS_Store
 .AppleDouble
@@ -7,11 +14,6 @@
 __pycache__/
 *.py[codz]
 *$py.class
-*.bin
-
-# C extensions
-leptonDriver/Release
-leptonDriver/Debug
 
 # Distribution / packaging
 .Python
