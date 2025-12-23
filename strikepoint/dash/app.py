@@ -1,6 +1,6 @@
 import dash_bootstrap_components as dbc
 
-from flask import Response, abort
+from flask import Response
 from dash import Dash, html, dcc, no_update
 from dash.dependencies import Input, Output, State
 from threading import Lock, Thread, Condition
@@ -9,41 +9,46 @@ from queue import Queue
 from strikepoint.database import Database
 from strikepoint.producer import FrameProducer
 from strikepoint.frames import FrameInfoWriter
-from strikepoint.imaging import CalibrationEngine, encodeImage, encodeFrame, \
-    StrikeDetectionEngine
+from strikepoint.imaging import CalibrationEngine, \
+    encodeImageAsJpeg, encodeFrameAsJpeg, StrikeDetectionEngine
 
 
 class StrikePointDashApp:
 
     def __init__(self, producer: FrameProducer):
-        # self.app = Dash(__name__, external_stylesheets=[dbc.themes.SLATE])
         self.app = Dash(__name__, title='StrikePoint', serve_locally=True)
         self.producer = producer
         self.frameWriter = None
         self.frameWriterLock = Lock()
         self.frameInfoCondition = Condition()
         self.frameInfo = None
-        self.contentMap = dict()
-        self.eventQueue = Queue()
+        self.imageFrameMap = dict()
         self.calibrationEngine = CalibrationEngine()
         self.strikeDetectionEngine = StrikeDetectionEngine()
         self.database = Database()
+
         self.thermalVisualTransform = self.database.loadLatestTransform()
+        self.eventQueueMap = {'add-card': Queue(),
+                              'update-calibration': Queue()}
 
         self.driverThread = Thread(target=self._threadMain, daemon=True)
         self.driverThread.start()
 
         self.app.layout = html.Div([
-            dcc.Store(id="memory-store", storage_type="memory"),
+            *list(dcc.Store(id=f"event-store-{a}", storage_type="memory")
+                  for a in self.eventQueueMap.keys()),
             dcc.Store(id="session-store", storage_type="session"),
             dcc.Interval(id="hidden-trigger", interval=250, n_intervals=0),
-            dbc.NavbarSimple(
-                children=[html.P(
+            dbc.NavbarSimple([
+                dbc.NavItem(
                     dbc.Badge("Not Calibrated", color="warning", className="me-1",
                               id="calibration-status-badge",
                               style={"marginTop": "4px", "marginBottom": "4px"}),
                     id="navbar-calibration-status",
-                    style={"verticalAlign": "middle", "marginBottom": "0px"})],
+                    style={"verticalAlign": "middle",
+                           "horizontalAlign": "middle"}
+                ),
+            ],
                 brand="StrikePoint",
                 brand_href="#",
                 color="primary",
@@ -90,25 +95,14 @@ class StrikePointDashApp:
         ], style={"height": "100vh", "backgroundColor": "#0f1724"})
 
         @self.app.server.route("/content/video/<path:subpath>")
-        def stream_video_frame_route(subpath):
+        def serve_video_frames(subpath):
             return Response(self._rgbFrameGenerator(subpath),
                             mimetype="multipart/x-mixed-replace; boundary=frame")
 
         @self.app.server.route("/content/image/<path:subpath>", methods=["GET"])
-        def serve_content(subpath):
-            try:
-                return self.contentMap.get(subpath, None)
-            except Exception:
-                abort(404)
-
-        @self.app.callback(
-            Output("memory-store", "data"),
-            Input("hidden-trigger", "n_intervals"),
-        )
-        def check_event(n_intervals):
-            if self.eventQueue.qsize() > 0:
-                return {"events": True}
-            return no_update
+        def serve_images(subpath):
+            return Response(encodeImageAsJpeg(self.imageFrameMap[subpath]),
+                            mimetype="image/jpeg")
 
         @self.app.callback(
             Input("session-store", "data"),
@@ -116,14 +110,13 @@ class StrikePointDashApp:
         )
         def detect_reload(data):
             if data is None:
-                self.eventQueue.put({'event': 'updateCalibration'})
+                self.eventQueueMap['update-calibration'].put({})
 
         @self.app.callback(Input("recalibrate-btn", "n_clicks"))
         def on_recalibrate(_):
             self.thermalVisualTransform = None
-            self.eventQueue.put({'event': 'updateCalibration'})
+            self.eventQueueMap['update-calibration'].put({})
 
-        # Dash callback to start recording when button pressed
         @self.app.callback(Output("start-rec-btn", "children"),
                            Input("start-rec-btn", "n_clicks"))
         def on_start_record(_):
@@ -140,35 +133,50 @@ class StrikePointDashApp:
                 return "Start Recording"
 
         @self.app.callback(
+            *list(Output(f"event-store-{a}", "data")
+                  for a in self.eventQueueMap.keys()),
+            Input("hidden-trigger", "n_intervals"),
+        )
+        def check_events_and_broadcast(_):
+            return tuple(list(True if a.qsize() > 0 else no_update
+                              for a in self.eventQueueMap.values()))
+
+        @self.app.callback(
             Output("cards-div", "children"),
+            Input("event-store-add-card", "data"),
+            State("cards-div", "children"),
+            prevent_initial_call=True
+        )
+        def event_add_card(_, cards_div_children):
+            while self.eventQueueMap['add-card'].qsize() > 0:
+                event = self.eventQueueMap['add-card'].get_nowait()
+                self.eventQueueMap['add-card'].task_done()
+                cards_div_children = cards_div_children or []
+                cards_div_children = [event['card']] + cards_div_children
+
+            return cards_div_children
+
+        @self.app.callback(
             Output("calibration-status-badge", "children"),
             Output("calibration-status-badge", "color"),
-            Input("memory-store", "data"),
-            State("cards-div", "children"),
+            Input("event-store-update-calibration", "data"),
             State("calibration-status-badge", "children"),
             State("calibration-status-badge", "color"),
             prevent_initial_call=True
         )
-        def update_layout(_,
-                          cards_div_children,
-                          calibration_status_children,
-                          calibration_status_color):
-            for _ in range(self.eventQueue.qsize()):
-                event = self.eventQueue.get_nowait()
-                self.eventQueue.task_done()
-                if event['event'] == 'addCard':
-                    cards_div_children = cards_div_children or []
-                    cards_div_children = [event['card']] + cards_div_children
-                elif event['event'] == 'updateCalibration':
-                    calibration_status_children = "Not Calibrated"
-                    calibration_status_color = "warning"
-                    if self.thermalVisualTransform is not None:
-                        calibration_status_children = "Ready"
-                        calibration_status_color = "success"
+        def event_update_calibration(_,
+                                     calibration_status_children,
+                                     calibration_status_color):
+            while self.eventQueueMap['update-calibration'].qsize() > 0:
+                self.eventQueueMap['update-calibration'].get_nowait()
+                self.eventQueueMap['update-calibration'].task_done()
+                calibration_status_children = "Not Calibrated"
+                calibration_status_color = "warning"
+                if self.thermalVisualTransform is not None:
+                    calibration_status_children = "Ready"
+                    calibration_status_color = "success"
 
-            return (cards_div_children,
-                    calibration_status_children,
-                    calibration_status_color)
+            return calibration_status_children, calibration_status_color
 
     def _rgbFrameGenerator(self, name: str):
         lastSeenTimestamp = 0.0
@@ -178,7 +186,7 @@ class StrikePointDashApp:
                         self.frameInfo.timestamp <= lastSeenTimestamp):
                     self.frameInfoCondition.wait()
             lastSeenTimestamp = self.frameInfo.timestamp
-            yield encodeFrame(self.frameInfo.rgbFrames[name])
+            yield encodeFrameAsJpeg(self.frameInfo.rgbFrames[name])
 
     def _threadMain(self):
         frameSeq = 0
@@ -203,26 +211,23 @@ class StrikePointDashApp:
                         self.strikeDetectionEngine.reset()
                         cardTag = f"calibrate_{frameSeq:012d}"
                         contentPath = f"{cardTag}.jpg"
-                        self.contentMap[contentPath] = Response(
-                            encodeImage(result['image']), mimetype="image/jpeg")
+                        self.imageFrameMap[contentPath] = result['image']
                         card = dbc.Card([
                             dbc.Alert("Calibration Complete", color='success'),
                             dbc.CardBody(
                                 html.Img(src=f"/content/image/{contentPath}")),
                         ], style={"marginBottom": "4px"})
-                        self.eventQueue.put({
-                            'event': 'addCard', 'card': card})
-                        self.eventQueue.put({'event': 'updateCalibration'})
+                        self.eventQueueMap['add-card'].put({'card': card})
+                        self.eventQueueMap['update-calibration'].put({})
 
-                # TODO: TThis is a race condition if recalibrate is pressed while here
+                # TODO: This is a race condition if recalibrate is pressed while here
                 if self.thermalVisualTransform is not None:
                     result = self.strikeDetectionEngine.detectStrike(
                         self.frameInfo, self.thermalVisualTransform)
                     if result is not None:
                         cardTag = f"strike_{frameSeq:012d}"
                         contentPath = f"{cardTag}.jpg"
-                        self.contentMap[contentPath] = Response(
-                            encodeImage(result['image']), mimetype="image/jpeg")
+                        self.imageFrameMap[contentPath] = result['image']
                         color = 'success'
                         color = 'danger' if result['leftScore'] < 0.4 else 'warning'
                         headerText = f"Left Score: {result['leftScore']*100:.1f}%, " \
@@ -232,7 +237,7 @@ class StrikePointDashApp:
                             dbc.CardBody(
                                 html.Img(src=f"/content/image/{contentPath}")),
                         ], style={"marginBottom": "4px"})
-                        self.eventQueue.put({'event': 'addCard', 'card': card})
+                        self.eventQueueMap['add-card'].put({'card': card})
 
             except Exception as ex:
                 print(f"StrikePointDashApp thread exception: {ex}")

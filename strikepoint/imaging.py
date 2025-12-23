@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 
 
-def encodeFrame(frame: np.ndarray) -> bytes:
+def encodeFrameAsJpeg(frame: np.ndarray) -> bytes:
     ok, encoded = cv2.imencode(".jpg", frame)
     if not ok:
         raise RuntimeError("Failed to encode frame")
@@ -10,7 +10,7 @@ def encodeFrame(frame: np.ndarray) -> bytes:
         encoded.tobytes() + b"\r\n"
 
 
-def encodeImage(frame: np.ndarray) -> bytes:
+def encodeImageAsJpeg(frame: np.ndarray) -> bytes:
     ok, encoded = cv2.imencode(".jpg", frame)
     if not ok:
         raise RuntimeError("Failed to encode frame")

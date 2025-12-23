@@ -1,6 +1,6 @@
 # Strikepoint-specific stuff
-leptonDriver/Release
-leptonDriver/Debug
+lepton/Release
+lepton/Debug
 *.log
 *.db
 *.bin

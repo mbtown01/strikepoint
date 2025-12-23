@@ -118,11 +118,11 @@ class LeptonDriver(FrameProvider):
         self._makeApiCall("LEPDRV_CameraDisable")
 
     @staticmethod
-    def find_library_path(name_hint="libleptonDriver.so"):
+    def find_library_path(name_hint="liblepton.so"):
         """Search common locations for the SDK shared library; return path or None."""
         candidates = [
-            os.path.join(os.getcwd(), f"leptonDriver/Release/{name_hint}"),
-            os.path.join(os.getcwd(), f"leptonDriver/Debug/{name_hint}"),
+            os.path.join(os.getcwd(), f"lepton/Release/{name_hint}"),
+            os.path.join(os.getcwd(), f"lepton/Debug/{name_hint}"),
             f"/usr/local/lib/{name_hint}",
             f"/usr/lib/{name_hint}",
         ]

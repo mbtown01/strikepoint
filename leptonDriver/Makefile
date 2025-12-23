@@ -12,7 +12,7 @@ OUTDIR=Release
 CCARGS=-O2
 endif
 
-NAME=libleptonDriver
+NAME=liblepton
 OBJ := $(patsubst %.c,$(OUTDIR)/%.o,$(wildcard *.c))
 
 # Pattern rules: use $@ and $< so targets and prerequisites line up correctly.
