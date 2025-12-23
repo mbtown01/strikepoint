@@ -11,6 +11,7 @@ from strikepoint.producer import FrameProducer
 from strikepoint.frames import FrameInfoWriter
 from strikepoint.imaging import CalibrationEngine, \
     encodeImageAsJpeg, encodeFrameAsJpeg, StrikeDetectionEngine
+from strikepoint.dash.events import DashEventQueueManager
 
 
 class StrikePointDashApp:
@@ -26,17 +27,58 @@ class StrikePointDashApp:
         self.calibrationEngine = CalibrationEngine()
         self.strikeDetectionEngine = StrikeDetectionEngine()
         self.database = Database()
-
+        self.eventQueue = DashEventQueueManager(self.app)
+        self.eventQueue.registerEvent(
+            'add-card', self.event_add_card, 
+            [("cards-div", "children")])
+        self.eventQueue.registerEvent(
+            'update-calibration', self.event_update_calibration,
+            [("calibration-status-badge", "children"),
+             ("calibration-status-badge", "color")])
         self.thermalVisualTransform = self.database.loadLatestTransform()
-        self.eventQueueMap = {'add-card': Queue(),
-                              'update-calibration': Queue()}
-
         self.driverThread = Thread(target=self._threadMain, daemon=True)
         self.driverThread.start()
 
+        @self.app.server.route("/content/video/<path:subpath>")
+        def serve_video_frames(subpath):
+            return Response(self._rgbFrameGenerator(subpath),
+                            mimetype="multipart/x-mixed-replace; boundary=frame")
+
+        @self.app.server.route("/content/image/<path:subpath>", methods=["GET"])
+        def serve_images(subpath):
+            return Response(encodeImageAsJpeg(self.imageFrameMap[subpath]),
+                            mimetype="image/jpeg")
+
+        @self.app.callback(
+            Input("session-store", "data"),
+            prevent_initial_call=False
+        )
+        def detect_reload(data):
+            if data is None:
+                self.eventQueue.fireEvent('update-calibration')
+
+        @self.app.callback(Input("recalibrate-btn", "n_clicks"))
+        def on_recalibrate(_):
+            self.thermalVisualTransform = None
+            self.eventQueue.fireEvent('update-calibration')
+
+        @self.app.callback(Output("start-rec-btn", "children"),
+                           Input("start-rec-btn", "n_clicks"))
+        def on_start_record(_):
+            try:
+                with self.frameWriterLock:
+                    if self.frameWriter is None:
+                        self.frameWriter = FrameInfoWriter("recording.bin")
+                        return "Stop Recording"
+                    else:
+                        self.frameWriter.close()
+                        self.frameWriter = None
+                        return "Start Recording"
+            except Exception as ex:
+                return "Start Recording"
+
         self.app.layout = html.Div([
-            *list(dcc.Store(id=f"event-store-{a}", storage_type="memory")
-                  for a in self.eventQueueMap.keys()),
+            *self.eventQueue.elementList,
             dcc.Store(id="session-store", storage_type="session"),
             dcc.Interval(id="hidden-trigger", interval=250, n_intervals=0),
             dbc.NavbarSimple([
@@ -94,89 +136,24 @@ class StrikePointDashApp:
             ], style={"position": "relative", "height": "100vh"}),
         ], style={"height": "100vh", "backgroundColor": "#0f1724"})
 
-        @self.app.server.route("/content/video/<path:subpath>")
-        def serve_video_frames(subpath):
-            return Response(self._rgbFrameGenerator(subpath),
-                            mimetype="multipart/x-mixed-replace; boundary=frame")
+    def event_add_card(self, cards_div_children, eventData: list):
+        for event in eventData:
+            cards_div_children = cards_div_children or []
+            cards_div_children = [event['card']] + cards_div_children
 
-        @self.app.server.route("/content/image/<path:subpath>", methods=["GET"])
-        def serve_images(subpath):
-            return Response(encodeImageAsJpeg(self.imageFrameMap[subpath]),
-                            mimetype="image/jpeg")
+        return cards_div_children
 
-        @self.app.callback(
-            Input("session-store", "data"),
-            prevent_initial_call=False
-        )
-        def detect_reload(data):
-            if data is None:
-                self.eventQueueMap['update-calibration'].put({})
+    def event_update_calibration(self,
+                                 calibration_status_children,
+                                 calibration_status_color,
+                                 _: list):
+        calibration_status_children = "Not Calibrated"
+        calibration_status_color = "warning"
+        if self.thermalVisualTransform is not None:
+            calibration_status_children = "Ready"
+            calibration_status_color = "success"
 
-        @self.app.callback(Input("recalibrate-btn", "n_clicks"))
-        def on_recalibrate(_):
-            self.thermalVisualTransform = None
-            self.eventQueueMap['update-calibration'].put({})
-
-        @self.app.callback(Output("start-rec-btn", "children"),
-                           Input("start-rec-btn", "n_clicks"))
-        def on_start_record(_):
-            try:
-                with self.frameWriterLock:
-                    if self.frameWriter is None:
-                        self.frameWriter = FrameInfoWriter("recording.bin")
-                        return "Stop Recording"
-                    else:
-                        self.frameWriter.close()
-                        self.frameWriter = None
-                        return "Start Recording"
-            except Exception as ex:
-                return "Start Recording"
-
-        @self.app.callback(
-            *list(Output(f"event-store-{a}", "data")
-                  for a in self.eventQueueMap.keys()),
-            Input("hidden-trigger", "n_intervals"),
-        )
-        def check_events_and_broadcast(_):
-            return tuple(list(True if a.qsize() > 0 else no_update
-                              for a in self.eventQueueMap.values()))
-
-        @self.app.callback(
-            Output("cards-div", "children"),
-            Input("event-store-add-card", "data"),
-            State("cards-div", "children"),
-            prevent_initial_call=True
-        )
-        def event_add_card(_, cards_div_children):
-            while self.eventQueueMap['add-card'].qsize() > 0:
-                event = self.eventQueueMap['add-card'].get_nowait()
-                self.eventQueueMap['add-card'].task_done()
-                cards_div_children = cards_div_children or []
-                cards_div_children = [event['card']] + cards_div_children
-
-            return cards_div_children
-
-        @self.app.callback(
-            Output("calibration-status-badge", "children"),
-            Output("calibration-status-badge", "color"),
-            Input("event-store-update-calibration", "data"),
-            State("calibration-status-badge", "children"),
-            State("calibration-status-badge", "color"),
-            prevent_initial_call=True
-        )
-        def event_update_calibration(_,
-                                     calibration_status_children,
-                                     calibration_status_color):
-            while self.eventQueueMap['update-calibration'].qsize() > 0:
-                self.eventQueueMap['update-calibration'].get_nowait()
-                self.eventQueueMap['update-calibration'].task_done()
-                calibration_status_children = "Not Calibrated"
-                calibration_status_color = "warning"
-                if self.thermalVisualTransform is not None:
-                    calibration_status_children = "Ready"
-                    calibration_status_color = "success"
-
-            return calibration_status_children, calibration_status_color
+        return calibration_status_children, calibration_status_color
 
     def _rgbFrameGenerator(self, name: str):
         lastSeenTimestamp = 0.0
@@ -217,8 +194,8 @@ class StrikePointDashApp:
                             dbc.CardBody(
                                 html.Img(src=f"/content/image/{contentPath}")),
                         ], style={"marginBottom": "4px"})
-                        self.eventQueueMap['add-card'].put({'card': card})
-                        self.eventQueueMap['update-calibration'].put({})
+                        self.eventQueue.fireEvent('add-card', {'card': card})
+                        self.eventQueue.fireEvent('update-calibration')
 
                 # TODO: This is a race condition if recalibrate is pressed while here
                 if self.thermalVisualTransform is not None:
@@ -231,13 +208,13 @@ class StrikePointDashApp:
                         color = 'success'
                         color = 'danger' if result['leftScore'] < 0.4 else 'warning'
                         headerText = f"Left Score: {result['leftScore']*100:.1f}%, " \
-                                     f"Right Score: {result['rightScore']*100:.1f}%"
+                            f"Right Score: {result['rightScore']*100:.1f}%"
                         card = dbc.Card([
                             dbc.Alert(headerText, color=color),
                             dbc.CardBody(
                                 html.Img(src=f"/content/image/{contentPath}")),
                         ], style={"marginBottom": "4px"})
-                        self.eventQueueMap['add-card'].put({'card': card})
+                        self.eventQueue.fireEvent('add-card', {'card': card})
 
             except Exception as ex:
                 print(f"StrikePointDashApp thread exception: {ex}")
