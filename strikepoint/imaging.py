@@ -74,6 +74,9 @@ class CalibrationEngine:
 
         visCircles = findBrightestCircles(visFrame, 3, throwOnFail=False)
         thermCircles = findBrightestCircles(thermFrame, 3, throwOnFail=False)
+        if (len(visCircles) < 3) or (len(thermCircles) < 3):
+            return None
+        
         visMatrix = np.float32([c[:2] for c in sorted(visCircles[:3])])
         thermMatrix = np.float32(
             [c[:2] for c in sorted(thermCircles[:3])])

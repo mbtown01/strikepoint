@@ -7,7 +7,7 @@ from strikepoint.producer import FrameProvider
 from logging import getLogger
 from queue import Queue
 
-from strikepoint.app import StrikePointDashApp
+from strikepoint.dash.app import StrikePointDashApp
 from strikepoint.producer import FrameProducer, FrameProvider
 from strikepoint.frames import FrameInfoReader
 

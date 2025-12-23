@@ -1,6 +1,6 @@
 import cv2
 
-from strikepoint.app import StrikePointDashApp
+from strikepoint.dash.app import StrikePointDashApp
 from strikepoint.producer import FrameProducer, FrameProvider
 from strikepoint.driver import LeptonDriver
 from picamera2 import Picamera2
