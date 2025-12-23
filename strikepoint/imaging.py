@@ -2,21 +2,6 @@ import cv2
 import numpy as np
 
 
-def encodeFrameAsJpeg(frame: np.ndarray) -> bytes:
-    ok, encoded = cv2.imencode(".jpg", frame)
-    if not ok:
-        raise RuntimeError("Failed to encode frame")
-    return b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + \
-        encoded.tobytes() + b"\r\n"
-
-
-def encodeImageAsJpeg(frame: np.ndarray) -> bytes:
-    ok, encoded = cv2.imencode(".jpg", frame)
-    if not ok:
-        raise RuntimeError("Failed to encode frame")
-    return encoded.tobytes()
-
-
 def findBrightestCircles(frame, targetCount, *,
                          factor: float = 1.5,
                          throwOnFail: bool = True):
@@ -76,7 +61,7 @@ class CalibrationEngine:
         thermCircles = findBrightestCircles(thermFrame, 3, throwOnFail=False)
         if (len(visCircles) < 3) or (len(thermCircles) < 3):
             return None
-        
+
         visMatrix = np.float32([c[:2] for c in sorted(visCircles[:3])])
         thermMatrix = np.float32(
             [c[:2] for c in sorted(thermCircles[:3])])
@@ -112,11 +97,11 @@ class StrikeDetectionEngine:
     """
 
     def __init__(self):
-        self.foundHistory = list()
-        self.foundSeq = tuple([True]*3 + [False]*3)
+        self.foundBallObservedSeq = list()
+        self.foundBallExpectedSeq = tuple([True]*3 + [False]*3)
 
     def reset(self):
-        self.foundHistory = list()
+        self.foundBallObservedSeq = list()
 
     def detectStrike(self, frameInfo: dict, thermalVisualTransform: np.ndarray):
         visFrame = frameInfo.rgbFrames['visual']
@@ -124,68 +109,82 @@ class StrikeDetectionEngine:
         visCircles = findBrightestCircles(visFrame, 1, throwOnFail=False)
         foundSingleCircle = len(visCircles) == 1
         visCircle = visCircles[0] if foundSingleCircle else None
-        self.foundHistory.append((frameInfo, foundSingleCircle, visCircle))
+        self.foundBallObservedSeq.append(
+            (frameInfo, foundSingleCircle, visCircle))
 
-        if len(self.foundHistory) == len(self.foundSeq):
-            localHistory = self.foundHistory
-            self.foundHistory = self.foundHistory[1:]
-            if all(a == b[1] for a, b in zip(self.foundSeq, localHistory)):
-                t1 = localHistory[0][0].rgbFrames['thermal']
-                v1 = localHistory[0][0].rgbFrames['visual']
-                c = localHistory[0][2]
+        # If we don't yet have enough data, discard
+        if len(self.foundBallObservedSeq) != len(self.foundBallExpectedSeq):
+            return None
 
-                # Based on the foundHistory config, build an average of the
-                # frames before and after the ball disappears from the frame
-                beforeFrames = list(a[0].rawFrames['thermal']
-                                    for a in localHistory if a[1])
-                afterFrames = list(a[0].rawFrames['thermal']
-                                   for a in localHistory if not a[1])
-                thermalDiff = ((sum(afterFrames) / len(afterFrames)) -
-                               (sum(beforeFrames) / len(beforeFrames)))
+        # If the observed sequence doesn't match the expected, discard
+        localSeq = self.foundBallObservedSeq
+        self.foundBallObservedSeq = self.foundBallObservedSeq[1:]
+        if any(a != b[1] for a, b in zip(self.foundBallExpectedSeq, localSeq)):
+            return None
 
-                # Clean and clip the image so we only see POSITIVE heat delta.  In
-                # scenarios where a ball is warmer than the scene, this is required
-                thermalDiff = np.clip(thermalDiff, thermalDiff.max()*0.1, None)
-                thermalDiff = cv2.GaussianBlur(thermalDiff, (5, 5), 0)
-                thermalDiff = cv2.resize(thermalDiff, t1.shape[:2][::-1],
-                                         interpolation=cv2.INTER_NEAREST)
-                thermalDiff = cv2.normalize(
-                    thermalDiff, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-                thermalDiff = cv2.applyColorMap(thermalDiff, cv2.COLORMAP_HOT)
-                thermalDenoised = cv2.fastNlMeansDenoising(
-                    thermalDiff, None, h=50, templateWindowSize=7,
-                    searchWindowSize=21)
+        t1 = localSeq[0][0].rgbFrames['thermal']
+        v1 = localSeq[0][0].rgbFrames['visual']
+        c = localSeq[0][2]
 
-                thermalDiffW = cv2.warpAffine(
-                    thermalDiff, thermalVisualTransform, (
-                        Wv, Hv), flags=cv2.INTER_LINEAR,
-                    borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-                thermalDenoisedW = cv2.warpAffine(
-                    thermalDenoised, thermalVisualTransform, (
-                        Wv, Hv), flags=cv2.INTER_LINEAR,
-                    borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+        # Based on the foundHistory config, build an average of the
+        # frames before and after the ball disappears from the frame
+        beforeFrames = list(a[0].rawFrames['thermal']
+                            for a in localSeq if a[1])
+        afterFrames = list(a[0].rawFrames['thermal']
+                           for a in localSeq if not a[1])
+        thermalDiff = ((sum(afterFrames) / len(afterFrames)) -
+                       (sum(beforeFrames) / len(beforeFrames)))
 
-                diffGray = cv2.cvtColor(thermalDiffW, cv2.COLOR_RGB2GRAY)
-                if diffGray.sum() == 0:
-                    return None
-                
-                final = cv2.add(v1, thermalDenoisedW)
-                diffShape = tuple(final.shape[:2][::-1])
-                leftDiff, rightDiff = diffGray.copy(), diffGray.copy()
-                cv2.rectangle(rightDiff, (0, 0), (c[0]-c[2], diffShape[1]), 0, -1, 1)
-                cv2.rectangle(leftDiff, (c[0]+c[2], 0), diffShape, 0, -1, 1)
-                leftScore = leftDiff.sum() / diffGray.sum()
-                rightScore = rightDiff.sum() / diffGray.sum()
+        # Clip, clean and then denoise the image so we only see
+        # POSITIVE heat delta.  In scenarios where a ball is warmer
+        # than the scene, this is required
+        thermalDiff = np.clip(thermalDiff, thermalDiff.max()*0.1, None)
+        thermalDiff = cv2.GaussianBlur(thermalDiff, (5, 5), 0)
+        thermalDiff = cv2.resize(thermalDiff, t1.shape[:2][::-1],
+                                 interpolation=cv2.INTER_NEAREST)
+        thermalDiff = cv2.normalize(
+            thermalDiff, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        thermalDiff = cv2.applyColorMap(thermalDiff, cv2.COLORMAP_HOT)
+        thermalDenoised = cv2.fastNlMeansDenoising(
+            thermalDiff, None, h=50, templateWindowSize=7,
+            searchWindowSize=21)
 
-                cv2.circle(
-                    thermalDiffW, (int(c[0]), int(c[1])), c[2], (0, 255, 0), 2)
-                cv2.circle(final, (int(c[0]), int(c[1])), c[2], (0, 255, 0), 2)
-                return {
-                    'final': final,
-                    'thermalDiffW': thermalDiffW,
-                    'image': np.hstack((final, thermalDiffW)),
-                    'leftScore': leftScore,
-                    'rightScore': rightScore
-                }
+        # Warp the thermal images to visual space
+        thermalDiffW = cv2.warpAffine(
+            thermalDiff, thermalVisualTransform, (Wv, Hv),
+            flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
+            borderValue=0)
+        thermalDenoisedW = cv2.warpAffine(
+            thermalDenoised, thermalVisualTransform, (Wv, Hv),
+            flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
+            borderValue=0)
+
+        # Analyze the warped thermal diff to see if there's a
+        # significant heat signature at the location of the ball.  If
+        # not, we discard this as a non-strike event
+        diffGrayW = cv2.cvtColor(thermalDiffW, cv2.COLOR_RGB2GRAY)
+        if diffGrayW.sum() == 0:
+            return None
+
+        # Build final images and compute left/right scores
+        final = cv2.add(v1, thermalDenoisedW)
+        diffShape = tuple(final.shape[:2][::-1])
+        leftDiff, rightDiff = diffGrayW.copy(), diffGrayW.copy()
+        cv2.rectangle(
+            rightDiff, (0, 0), (c[0]-c[2], diffShape[1]), 0, -1, 1)
+        cv2.rectangle(leftDiff, (c[0]+c[2], 0), diffShape, 0, -1, 1)
+        leftScore = leftDiff.sum() / diffGrayW.sum()
+        rightScore = rightDiff.sum() / diffGrayW.sum()
+
+        cv2.circle(
+            thermalDiffW, (int(c[0]), int(c[1])), c[2], (0, 255, 0), 2)
+        cv2.circle(final, (int(c[0]), int(c[1])), c[2], (0, 255, 0), 2)
+        return {
+            'final': final,
+            'thermalDiffW': thermalDiffW,
+            'image': np.hstack((final, thermalDiffW)),
+            'leftScore': leftScore,
+            'rightScore': rightScore
+        }
 
         return None
