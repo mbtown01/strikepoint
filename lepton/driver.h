@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 
 typedef void *LEPDRV_SessionHandle;
 
@@ -19,6 +20,15 @@ typedef enum {
     LEPDRV_TEMP_UNITS_FAHRENHEIT,
     LEPDRV_TEMP_UNITS_MAX
 } LEPDRV_TemperatureUnit;
+
+typedef enum {
+    LEPDRV_LOG_LEVEL_DEBUG = 0,
+    LEPDRV_LOG_LEVEL_INFO,
+    LEPDRV_LOG_LEVEL_WARNING,
+    LEPDRV_LOG_LEVEL_ERROR,
+    LEPDRV_LOG_LEVEL_CRITICAL,
+    LEPDRV_LOG_LEVEL_MAX
+} LEPDRV_LogLevel;
 
 // Create a new session
 int LEPDRV_Init(
@@ -43,9 +53,17 @@ int LEPDRV_CameraEnable(LEPDRV_SessionHandle hndl);
 int LEPDRV_SetTemperatureUnits(
     LEPDRV_SessionHandle hndl, LEPDRV_TemperatureUnit unit);
 
-// Set the log file for driver messages
+// Set the log file for driver messages, or NULL to log to memory
 int LEPDRV_SetLogFile(
     LEPDRV_SessionHandle hndl, char *logFilePath);
+
+// Get the next log entry from the driver, in the case the log file
+// was set to NULL
+int LEPDRV_GetNextLogEntry(LEPDRV_SessionHandle hndl,
+                           bool *hasEntry,
+                           LEPDRV_LogLevel *level,
+                           char *buffer,
+                           size_t bufferLen);
 
 // Gets the next (raw) frame of data from the device in degC (or degF)
 int LEPDRV_GetFrame(

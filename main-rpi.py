@@ -14,7 +14,7 @@ class PicameraFrameProvider(FrameProvider):
         self.picamera.start()
 
     def getFrame(self):
-        # Specialize here and convert the image to the expected 
+        # Specialize here and convert the image to the expected
         # format/orientation
         frame = self.picamera.capture_array()
         frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
@@ -22,6 +22,7 @@ class PicameraFrameProvider(FrameProvider):
         frame = cv2.flip(frame, 0)
         frame = cv2.flip(frame, 1)
         return frame
+
 
 class LeptonFrameProvider(FrameProvider):
 
@@ -39,10 +40,8 @@ class LeptonFrameProvider(FrameProvider):
 
 
 if __name__ == "__main__":
-    leptonDriver = LeptonDriver()
-    leptonDriver.setLogFile('app.log')
-    leptonDriver.startPolling()
+    leptonFrameProvider = LeptonFrameProvider()
     visualFrameProvider = PicameraFrameProvider()
-    producer = FrameProducer(leptonDriver, visualFrameProvider)
+    producer = FrameProducer(leptonFrameProvider, visualFrameProvider)
     app_instance = StrikePointDashApp(producer)
     app_instance.run()

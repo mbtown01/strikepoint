@@ -1,0 +1,68 @@
+#!/bin/bash
+# set -euo pipefail
+
+# Simple build helper:
+#   ./compile <Config> [--clean] [--jobs N]
+# Examples:
+#   ./compile Release
+#   ./compile Debug --jobs 8
+#   ./compile Release --clean
+
+usage() {
+    echo "Usage: $0 <Config> [--clean] [--jobs N] [--help]"
+    echo "  <Config>   Build configuration (e.g. Debug, Release)"
+    echo "  --clean    Run clean in the build directory and exit"
+    echo "  --jobs N   Parallel build jobs (forwarded to build tool)"
+    exit 1
+}
+
+die() {
+    echo "Error: $1"
+    exit 2
+}
+
+LEPTON_ROOT="$(readlink -f "$0")"
+LEPTON_ROOT="$(dirname "${LEPTON_ROOT}")"
+
+if [ $# -lt 1 ]; then
+    usage
+fi
+
+BUILD_CONFIG="$1"
+shift
+
+case "$BUILD_CONFIG" in
+    Debug|Release)
+        ;;
+    *)
+        die "Build config was '${BUILD_CONFIG}', must be 'Debug' or 'Release'"
+        ;;
+esac
+
+cd "${LEPTON_ROOT}"
+BUILD_DIR="./${BUILD_CONFIG}"
+mkdir -p "${BUILD_DIR}"
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --clean)
+            echo "Cleaning build directory ${BUILD_DIR}"
+            rm -rf ${BUILD_DIR}
+            shift
+            ;;
+        --help|-h)
+            usage
+            ;;
+        *)
+            echo "Unknown option: $1"
+            usage
+            ;;
+    esac
+done
+
+
+# cmake -S . -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE="${BUILD_CONFIG}"
+cmake -B ${BUILD_CONFIG} -S . -DCMAKE_BUILD_TYPE=${BUILD_CONFIG} || \
+    die "CMake configuration failed"
+cd ${BUILD_CONFIG} || die "Failed to enter build directory"
+exec make CFG=${BUILD_CONFIG}

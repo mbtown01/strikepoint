@@ -77,7 +77,7 @@ int main(int argc, char *argv[]) {
 
     LEPDRV_DriverInfo driverInfo;
     LEPDRV_SessionHandle hndl;
-    if (0 != LEPDRV_Init(&hndl, &driverInfo, NULL)) {
+    if (0 != LEPDRV_Init(&hndl, &driverInfo, "stdout")) {
         fprintf(stderr, "Error initializing Lepton driver\n");
         exit(1);
     }
@@ -87,7 +87,6 @@ int main(int argc, char *argv[]) {
     int fd = open(outfile, O_CREAT | O_WRONLY | O_TRUNC, 0664);
     if (fd < 0) {
         perror("open(output.bin)");
-        LEPDRV_Shutdown(hndl);
         exit(1);
     }
 
@@ -95,8 +94,18 @@ int main(int argc, char *argv[]) {
     // start polling here
     LEPDRV_StartPolling(hndl);
 
+    bool hasMessage = false;
+    LEPDRV_LogLevel level;
+    char logBuffer[4096];
+
     CRC16 crcOld = 0;
     for (int i = 0; i < frames; i++) {
+        while (LEPDRV_GetNextLogEntry(hndl, &hasMessage, &level, logBuffer,
+                                      sizeof(logBuffer)) == 0 &&
+               hasMessage) {
+            printf("LOG [%d]: %s\n", level, logBuffer);
+        }
+
         double start = get_time_sec();
         if (0 != LEPDRV_GetFrame(hndl, buffer)) {
             fprintf(stderr, "Error capturing frame %d\n", i);
@@ -129,6 +138,12 @@ int main(int argc, char *argv[]) {
         // printf("\n");
         if (delay > 0)
             usleep(delay * 1e6);
+    }
+
+    while (LEPDRV_GetNextLogEntry(hndl, &hasMessage, &level, logBuffer,
+                                    sizeof(logBuffer)) == 0 &&
+            hasMessage) {
+        printf("FINAL [%d]: %s\n", level, logBuffer);
     }
 
     close(fd);

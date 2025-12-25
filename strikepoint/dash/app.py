@@ -54,7 +54,9 @@ class StrikePointDashApp:
 
         @self.app.callback(Output("start-rec-btn", "children"),
                            Input("start-rec-btn", "n_clicks"))
-        def on_start_record(_):
+        def on_start_record(n_clicks):
+            if n_clicks is None or n_clicks % 2 == 0:
+                return no_update
             try:
                 with self.frameWriterLock:
                     if self.frameWriter is None:

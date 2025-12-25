@@ -5,13 +5,26 @@ from queue import Queue
 
 
 class DashEventQueueManager:
+    """
+    A common problem when building Dash applications is the need to
+    handle events that may occur asynchronously or from sources other than 
+    events directly tied to Dash components.
+
+    The DashEventQueueManager class provides a way to fire events 
+    asynchronously and have them processed in a batch by registered handlers.
+    It works based on a Dash timer that periodically checks for new events,
+    and then invokes the appropriate registered handlers.
+    """
+
+    _elementPrefix = "zz-qmgr-event-store-"
 
     def __init__(self, app: Dash):
         self.app = app
         self.eventQueueMap = dict()
         self.isFinalized = False
         self.elementList = [
-            dcc.Interval(id="qmgr-hidden-trigger", interval=250, n_intervals=0)]
+            dcc.Interval(id=f"{self._elementPrefix}-hidden-trigger", 
+                         interval=250, n_intervals=0)]
 
     def registerEvent(self,
                       name: str,
@@ -31,7 +44,7 @@ class DashEventQueueManager:
         if self.isFinalized:
             raise RuntimeError("Cannot register new events after finalization")
 
-        eventStoreName = f"qmgr-event-store-{name}"
+        eventStoreName = f"{self._elementPrefix}-{name}"
         self.eventQueueMap[name] = Queue()
         self.elementList.append(
             dcc.Store(id=eventStoreName, storage_type="memory"))
@@ -49,9 +62,9 @@ class DashEventQueueManager:
         self.isFinalized = True
 
         @self.app.callback(
-            *list(Output(f"qmgr-event-store-{a}", "data")
+            *list(Output(f"{self._elementPrefix}-{a}", "data")
                   for a in self.eventQueueMap.keys()),
-            Input("qmgr-hidden-trigger", "n_intervals"))
+            Input(f"{self._elementPrefix}-hidden-trigger", "n_intervals"))
         def _check_events_and_broadcast(_):
             return tuple(list(True if a.qsize() > 0 else no_update
                               for a in self.eventQueueMap.values()))

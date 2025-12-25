@@ -2,9 +2,9 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "build capture",
+            "label": "compile Debug",
             "type": "shell",
-            "command": "cd lepton && make CFG=Debug Debug/capture",
+            "command": "./lepton/compile Debug",
             "group": {
                 "kind": "build",
                 "isDefault": true

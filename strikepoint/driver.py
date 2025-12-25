@@ -4,7 +4,9 @@ import ctypes.util
 import numpy as np
 
 from strikepoint.producer import FrameProvider
+from logging import DEBUG, INFO, WARNING, ERROR, CRITICAL
 from enum import IntEnum
+from time import time
 
 
 class LeptonDriver(FrameProvider):
@@ -23,11 +25,19 @@ class LeptonDriver(FrameProvider):
             ("frameHeight", ctypes.c_uint16),
         ]
 
+    _logLevelMap = {
+        0: DEBUG,
+        1: INFO,
+        2: WARNING,
+        3: ERROR,
+        4: CRITICAL
+    }
+
     allFnNameList = [
         "LEPDRV_Shutdown", "LEPDRV_Init", "LEPDRV_GetFrame",
         "LEPDRV_CameraDisable", "LEPDRV_CameraEnable",
         "LEPDRV_SetTemperatureUnits", "LEPDRV_CheckIsRunning",
-        "LEPDRV_SetLogFile", "LEPDRV_StartPolling"]
+        "LEPDRV_SetLogFile", "LEPDRV_StartPolling", "LEPDRV_GetNextLogEntry"]
 
     def __init__(self, logPath: str = None):
         libPath = LeptonDriver.find_library_path()
@@ -53,6 +63,10 @@ class LeptonDriver(FrameProvider):
             ctypes.c_void_p, ctypes.POINTER(ctypes.c_bool)]
         self.fnMap["LEPDRV_SetLogFile"].argtypes = [
             ctypes.c_void_p, ctypes.c_char_p]
+        self.fnMap["LEPDRV_GetNextLogEntry"].argtypes = [
+            ctypes.c_void_p, ctypes.POINTER(ctypes.c_bool),
+            ctypes.POINTER(ctypes.c_int), ctypes.c_char_p,
+            ctypes.c_size_t]
 
         info = LeptonDriver.LEPDRV_DriverInfo()
         self.hndl = ctypes.c_void_p()
@@ -99,8 +113,23 @@ class LeptonDriver(FrameProvider):
     def setLogFile(self, logFile: str):
         """Set the log file
         """
+        logFile = bytes(logFile, encoding="utf8") if logFile else 0
         self._makeApiCall(
-            "LEPDRV_SetLogFile", ctypes.c_char_p(bytes(logFile, encoding="utf8")))
+            "LEPDRV_SetLogFile", ctypes.c_char_p(logFile))
+
+    def getNextLogEntry(self):
+        """Get the next log entry from the driver.
+        """
+        hasEntry = ctypes.c_bool()
+        level = ctypes.c_int()
+        bufferLen = 1024
+        buffer = ctypes.create_string_buffer(bufferLen)
+        self._makeApiCall(
+            "LEPDRV_GetNextLogEntry", ctypes.byref(hasEntry),
+            ctypes.byref(level), buffer, ctypes.c_size_t(bufferLen))
+        if not hasEntry.value:
+            return None
+        return (self._logLevelMap[level.value], buffer.value.decode('utf8'))
 
     def setTemperatureUnits(self, unit: TemperatureUnit):
         """Set temperature units on the driver.

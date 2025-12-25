@@ -25,14 +25,39 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/lepton/Debug/capture",
-            "args": [],
+            "args": [
+                "--frames",
+                "100"
+            ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}/lepton",
             "environment": [],
             "externalConsole": false,
             "MIMode": "gdb",
             "miDebuggerPath": "/usr/bin/gdb",
-            "preLaunchTask": "build capture",
+            "preLaunchTask": "compile Debug",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "gtest_driver",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/lepton/Debug/gtest_driver",
+            "args": [
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/lepton",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "miDebuggerPath": "/usr/bin/gdb",
+            "preLaunchTask": "compile Debug",
             "setupCommands": [
                 {
                     "description": "Enable pretty-printing for gdb",
