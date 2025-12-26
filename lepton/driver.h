@@ -12,6 +12,7 @@ typedef struct {
     uint8_t versionMinor;
     uint16_t frameWidth;
     uint16_t frameHeight;
+    uint32_t maxLogEntries;
 } LEPDRV_DriverInfo;
 
 typedef enum {
@@ -31,17 +32,12 @@ typedef enum {
 } LEPDRV_LogLevel;
 
 // Create a new session
-int LEPDRV_Init(
-    LEPDRV_SessionHandle *hndlPtr,
-    LEPDRV_DriverInfo *info,
-    const char *logFilePath);
+int LEPDRV_Init(LEPDRV_SessionHandle *hndlPtr,
+                LEPDRV_DriverInfo *info,
+                const char *logFilePath);
 
 // Start the SPI polling thread
 int LEPDRV_StartPolling(LEPDRV_SessionHandle hndl);
-
-// Check if the driver is running
-int LEPDRV_CheckIsRunning(
-    LEPDRV_SessionHandle *hndlPtr, bool *isRunning);
 
 // disable the camera and put it into power down mode
 int LEPDRV_CameraDisable(LEPDRV_SessionHandle hndl);
@@ -50,24 +46,17 @@ int LEPDRV_CameraDisable(LEPDRV_SessionHandle hndl);
 int LEPDRV_CameraEnable(LEPDRV_SessionHandle hndl);
 
 // Set temperature units for frames
-int LEPDRV_SetTemperatureUnits(
-    LEPDRV_SessionHandle hndl, LEPDRV_TemperatureUnit unit);
-
-// Set the log file for driver messages, or NULL to log to memory
-int LEPDRV_SetLogFile(
-    LEPDRV_SessionHandle hndl, char *logFilePath);
+int LEPDRV_SetTemperatureUnits(LEPDRV_SessionHandle hndl,
+                               LEPDRV_TemperatureUnit unit);
 
 // Get the next log entry from the driver, in the case the log file
 // was set to NULL
 int LEPDRV_GetNextLogEntry(LEPDRV_SessionHandle hndl,
-                           bool *hasEntry,
                            LEPDRV_LogLevel *level,
-                           char *buffer,
-                           size_t bufferLen);
+                           char *buffer, size_t bufferLen);
 
 // Gets the next (raw) frame of data from the device in degC (or degF)
-int LEPDRV_GetFrame(
-    LEPDRV_SessionHandle hndl, float *frameBuffer);
+int LEPDRV_GetFrame(LEPDRV_SessionHandle hndl, float *frameBuffer);
 
 // Close a session
 int LEPDRV_Shutdown(LEPDRV_SessionHandle hndl);

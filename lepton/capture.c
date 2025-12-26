@@ -94,17 +94,14 @@ int main(int argc, char *argv[]) {
     // start polling here
     LEPDRV_StartPolling(hndl);
 
-    bool hasMessage = false;
     LEPDRV_LogLevel level;
     char logBuffer[4096];
 
     CRC16 crcOld = 0;
     for (int i = 0; i < frames; i++) {
-        while (LEPDRV_GetNextLogEntry(hndl, &hasMessage, &level, logBuffer,
-                                      sizeof(logBuffer)) == 0 &&
-               hasMessage) {
+        while (0 == LEPDRV_GetNextLogEntry(
+                        hndl, &level, logBuffer, sizeof(logBuffer)))
             printf("LOG [%d]: %s\n", level, logBuffer);
-        }
 
         double start = get_time_sec();
         if (0 != LEPDRV_GetFrame(hndl, buffer)) {
@@ -131,8 +128,8 @@ int main(int argc, char *argv[]) {
 
         double elapsed = get_time_sec() - start;
         double delay = (1.0 / fps) - elapsed;
-        printf("Frame %d crc=%x elapsed=%lf delay=%lf min=%f, max=%f\n", 
-            i, crcNew, elapsed, delay, minVal, maxVal);
+        printf("Frame %d crc=%x elapsed=%lf delay=%lf min=%f, max=%f\n",
+               i, crcNew, elapsed, delay, minVal, maxVal);
         // for( int i=0; i<16; i++)
         //     printf("%f ", buffer[i]);
         // printf("\n");
@@ -140,11 +137,9 @@ int main(int argc, char *argv[]) {
             usleep(delay * 1e6);
     }
 
-    while (LEPDRV_GetNextLogEntry(hndl, &hasMessage, &level, logBuffer,
-                                    sizeof(logBuffer)) == 0 &&
-            hasMessage) {
+    while (0 == LEPDRV_GetNextLogEntry(hndl, &level, logBuffer,
+                                       sizeof(logBuffer)))
         printf("FINAL [%d]: %s\n", level, logBuffer);
-    }
 
     close(fd);
     printf("Done capturing frames, calling shutdown\n");

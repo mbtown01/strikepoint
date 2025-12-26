@@ -18,4 +18,6 @@
     "C_Cpp.clang_format_style": "file",
     "C_Cpp.clang_format_formatOnSave": true,
     "C_Cpp.clang_format_fallbackStyle": "Microsoft",
+    "testMate.cpp.test.executables": "lepton/Debug/gtest_driver",
+    "cmake.sourceDirectory": "/home/mbtowns/strikepoint/lepton"
 }

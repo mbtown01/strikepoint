@@ -33,7 +33,7 @@ class FrameInfoWriter:
                          rgbFrames=dict(), rawFrames=dict(),
                          metadata=frameInfo.metadata)
         for key, value in frameInfo.rgbFrames.items():
-            ok, encoded = cv2.imencode(".gif", value)
+            ok, encoded = cv2.imencode(".png", value)
             if not ok:
                 raise RuntimeError(f"Failed to encode frame for key {key}")
             outputMap['rgbFrames'][key] = encoded.tobytes()

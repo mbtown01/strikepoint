@@ -3,6 +3,7 @@ import cv2
 from strikepoint.dash.app import StrikePointDashApp
 from strikepoint.producer import FrameProducer, FrameProvider
 from strikepoint.driver import LeptonDriver
+from strikepoint.logger import get_logger
 from picamera2 import Picamera2
 
 
@@ -28,12 +29,15 @@ class LeptonFrameProvider(FrameProvider):
 
     def __init__(self):
         super().__init__()
-        self.leptonDriver = LeptonDriver()
-        self.leptonDriver.setLogFile('app.log')
+        self.leptonDriver = LeptonDriver(None)
         self.leptonDriver.startPolling()
 
     def getFrame(self):
         frame = self.leptonDriver.getFrame()
+        while (entry := self.leptonDriver.getNextLogEntry()) is not None:
+            level, msg = entry
+            get_logger().log(level, msg)
+
         frame = cv2.flip(frame, 0)
         frame = cv2.flip(frame, 1)
         return frame

@@ -9,7 +9,7 @@ class LeptonDriverTests(unittest.TestCase):
 
     @classmethod
     def setUp(cls):
-        cls.driver = LeptonDriver(logPath='stdout')
+        cls.driver = LeptonDriver(logPath=None)
 
     @classmethod
     def tearDown(cls):
@@ -42,9 +42,6 @@ class LeptonDriverTests(unittest.TestCase):
         self.assertEqual(frame.shape, (60, 80))
 
     def test_memory_logging(self):
-        # Enable logging to memory
-        self.driver.setLogFile(None)
-
         # Generate some log entries
         self.driver.startPolling()
         self.driver.getFrame()
@@ -53,7 +50,6 @@ class LeptonDriverTests(unittest.TestCase):
         entries = []
         while (entry := self.driver.getNextLogEntry()) is not None:
             level, message = entry
-            print(f"showing log entry for {level}: {message}")
             getLogger().log(level, message)
             entries.append(entry)
 

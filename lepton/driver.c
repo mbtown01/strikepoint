@@ -95,216 +95,15 @@ typedef struct {
     int threadRtn;
 } LEPDRV_Session;
 
-/*********************************************************************
- * _driverLog - log an error message with variable arguments
- *********************************************************************/
+// Forward declare some utility methods
+int _safeRead(LEPDRV_Session *session, int fd, void *buf, size_t len);
+int _driverMain(LEPDRV_Session *session);
+void *_spiPollingThreadMain(void *arg);
 void _driverLog(LEPDRV_Session *session,
                 const char *file,
                 const int line,
                 const LEPDRV_LogLevel logLevel,
-                const char *format, ...) {
-    time_t rawtime;
-    struct tm *timeinfo;
-    char timeStr[80], msgStr[4096];
-    va_list args;
-    static const char *levelStrings[] = {
-        "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"};
-
-    time(&rawtime);
-    timeinfo = localtime(&rawtime);
-    strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M:%S", timeinfo);
-
-    va_start(args, format);
-    vsnprintf(msgStr, sizeof(msgStr), format, args);
-    va_end(args);
-
-    if (session == NULL) {
-        fprintf(stderr, "%s [%s] %s:%d - %s\n",
-                timeStr, levelStrings[logLevel], file, line, msgStr);
-        return;
-    }
-
-    pthread_mutex_lock(&session->logMutex);
-    if (session->logFile != NULL) {
-        fprintf(session->logFile, "%s [%s] %s:%d - %s\n",
-                timeStr, levelStrings[logLevel], file, line, msgStr);
-        fflush(session->logFile);
-    } else {
-        if (session->logLength == LOG_BUFFER_SIZE) {
-            fprintf(stderr, "%s [ERROR]: log truncated\n", timeStr);
-            session->logLength -= 1;
-            session->logStartOffset =
-                (session->logStartOffset + 1) % LOG_BUFFER_SIZE;
-        }
-
-        LEPDRV_LogEntry *entry = session->logBuffer +
-                                 (session->logStartOffset + session->logLength) % LOG_BUFFER_SIZE;
-        memcpy(&entry->timestamp, &rawtime, sizeof(time_t));
-        strncpy(entry->message, msgStr, LOG_MAX_MESSAGE_LENGTH - 1);
-        entry->message[LOG_MAX_MESSAGE_LENGTH - 1] = '\0';
-        entry->level = logLevel;
-        session->logLength += 1;
-    }
-    pthread_mutex_unlock(&session->logMutex);
-}
-
-/*********************************************************************
- * LEPDRV_GetNextLogEntry - get the next log entry from the driver
- *********************************************************************/
-int LEPDRV_GetNextLogEntry(LEPDRV_SessionHandle hndl,
-                           bool *hasEntry,
-                           LEPDRV_LogLevel *level,
-                           char *buffer,
-                           size_t bufferLen) {
-    LEPDRV_Session *session = (LEPDRV_Session *) hndl;
-    if (session == NULL)
-        BAIL("SDK not initialized");
-    if (level == NULL)
-        BAIL("level pointer is NULL");
-    if (buffer == NULL)
-        BAIL("buffer pointer is NULL");
-    if (bufferLen == 0)
-        BAIL("bufferLen is zero");
-
-    pthread_mutex_lock(&session->logMutex);
-    *hasEntry = session->logLength > 0;
-    if (session->logLength > 0) {
-        LEPDRV_LogEntry *entry = session->logBuffer + session->logStartOffset;
-        *level = entry->level;
-        strncpy(buffer, entry->message, bufferLen - 1);
-        buffer[bufferLen - 1] = '\0';
-        session->logLength -= 1;
-        session->logStartOffset =
-            (session->logStartOffset + 1) % LOG_BUFFER_SIZE;
-    }
-    pthread_mutex_unlock(&session->logMutex);
-
-    return 0;
-}
-
-/*********************************************************************
- * safeRead - read exactly len bytes from fd into buf
- *********************************************************************/
-int _safeRead(LEPDRV_Session *session, int fd, void *buf, size_t len) {
-    size_t totalRead = 0;
-    while (totalRead < len) {
-        ssize_t bytesRead =
-            read(fd, (uint8_t *) buf + totalRead, len - totalRead);
-        if (bytesRead < 0)
-            BAIL("read failed, error=%s", strerror(errno));
-        totalRead += bytesRead;
-    }
-
-    return totalRead;
-}
-
-/*********************************************************************
- * _driverMain - Driver logic main loop
- *********************************************************************/
-int _driverMain(LEPDRV_Session *session) {
-    uint8_t buff[PACKETS_PER_FRAME][PACKET_SIZE];
-    const int maxFailedAttempts = 30;
-    const int pixelsPerFrame = FRAME_WIDTH * FRAME_HEIGHT;
-    int failedAttempsRemaining = maxFailedAttempts;
-    int matchingCrcCount = 0;
-    ssize_t bytesRead;
-    CRC16 lastCrc = 0;
-
-    while (session->shutdownRequested == false && failedAttempsRemaining > 0) {
-        // Read from SPI until we see the start of a frame
-        int tries = 100;
-        BAIL_ON_FAILED_SYS(
-            _safeRead(session, session->spiFd, buff[0], PACKET_SIZE));
-        while ((buff[0][0] & 0x0F) != 0 && buff[0][1] != 0 && tries-- > 0) {
-            usleep(10000);
-            BAIL_ON_FAILED_SYS(
-                _safeRead(session, session->spiFd, buff[0], PACKET_SIZE));
-        }
-        if (tries == 0)
-            continue;
-
-        // After seeing the start of a frame, read the rest of the packets
-        int goodPackets = 1;
-        for (int p = 1; p < PACKETS_PER_FRAME; p++, goodPackets++) {
-            BAIL_ON_FAILED_SYS(
-                _safeRead(session, session->spiFd, buff[p], PACKET_SIZE));
-            if ((buff[p][0] & 0x0F) != 0 || buff[p][1] != p)
-                break;
-        }
-
-        // If we didn't see all the packetes in the frame, reboot the camera
-        if (goodPackets != PACKETS_PER_FRAME) {
-            LOG_WARNING("Bad frame received (%d/%d packets), rebooting camera",
-                        goodPackets, PACKETS_PER_FRAME);
-            BAIL_ON_FAILED_LEP(LEPDRV_CameraDisable(session));
-            BAIL_ON_FAILED_LEP(LEPDRV_CameraEnable(session));
-            failedAttempsRemaining--;
-            continue;
-        }
-
-        // Updated the shared frame buffer and signal any waiters
-        float localBuffer[pixelsPerFrame];
-        for (int i = 0; i < pixelsPerFrame; i++) {
-            int r = i / FRAME_WIDTH, c = i % FRAME_WIDTH;
-            uint16_t v = (buff[r][4 + 2 * c] << 8) + buff[r][4 + 2 * c + 1];
-            float k = (float) v * 0.01f;
-            if (session->tempUnit == LEPDRV_TEMP_UNITS_CELCIUS)
-                k = k - 273.15f;
-            else if (session->tempUnit == LEPDRV_TEMP_UNITS_FAHRENHEIT)
-                k = ((k - 273.15f) * 9.0f / 5.0f) + 32.0f;
-            localBuffer[i] = k;
-        }
-
-        // Only wake up a getFrame caller if this frame is unique
-        CRC16 crc = CalcCRC16Bytes(sizeof(localBuffer), (char *) localBuffer);
-        if (lastCrc != crc) {
-            pthread_mutex_lock(&session->frameMutex);
-            memcpy(session->frameBuffer, localBuffer, sizeof(localBuffer));
-            session->hasFrame = true;
-            pthread_cond_signal(&session->frameCond);
-            pthread_mutex_unlock(&session->frameMutex);
-            lastCrc = crc;
-            matchingCrcCount = 0;
-            failedAttempsRemaining = maxFailedAttempts;
-        }
-
-        // Every now and then, we see the camera start to return the same
-        // frame over and over again.  If we see that happening for roughly
-        // a full second, reboot the camera
-        if (matchingCrcCount++ > 27) {
-            LOG_WARNING("Stale frames detected, rebooting camera");
-            BAIL_ON_FAILED_LEP(LEPDRV_CameraDisable(session));
-            BAIL_ON_FAILED_LEP(LEPDRV_CameraEnable(session));
-            matchingCrcCount = 0;
-            failedAttempsRemaining--;
-            continue;
-        }
-    }
-
-    if (failedAttempsRemaining == 0)
-        BAIL("Too many consecutive frame capture failures, exiting");
-
-    LOG_DEBUG("Driver thread exiting");
-    return 0;
-}
-
-/*********************************************************************
- * _spiPollingThreadMain - pthread entry point
- *********************************************************************/
-void *_spiPollingThreadMain(void *arg) {
-    LEPDRV_Session *session = (LEPDRV_Session *) arg;
-    session->isRunning = true;
-    session->threadRtn = _driverMain(session);
-    if (session->threadRtn != 0) {
-        pthread_mutex_lock(&session->frameMutex);
-        session->hasFrame = false;
-        pthread_cond_signal(&session->frameCond);
-        pthread_mutex_unlock(&session->frameMutex);
-    }
-
-    session->isRunning = false;
-    return NULL;
-}
+                const char *format, ...);
 
 /*********************************************************************
  * LEPDRV_Init - initialize the Lepton driver and camera
@@ -334,9 +133,22 @@ int LEPDRV_Init(LEPDRV_SessionHandle *hndlPtr,
     info->versionMinor = 0;
     info->frameWidth = FRAME_WIDTH;
     info->frameHeight = FRAME_HEIGHT;
+    info->maxLogEntries = LOG_BUFFER_SIZE;
 
-    BAIL_ON_FAILED_SYS(LEPDRV_SetLogFile(
-        (LEPDRV_SessionHandle) session, (char *) logFilePath));
+    if (logFilePath == NULL)
+        session->logFile = NULL;
+    else if (strncmp(logFilePath, "stdout", 6) == 0)
+        session->logFile = stdout;
+    else if (strncmp(logFilePath, "stderr", 6) == 0)
+        session->logFile = stderr;
+    else {
+        FILE *newLogFile = fopen(logFilePath, "w");
+        if (newLogFile == NULL) {
+            LOG_ERROR("Could not open log file %s", logFilePath);
+            return -1;
+        } else
+            session->logFile = newLogFile;
+    }
 
     LOG_INFO("LEPTON Driver Starting Up...");
 
@@ -484,47 +296,35 @@ int LEPDRV_GetFrame(LEPDRV_SessionHandle hndl,
 }
 
 /*********************************************************************
- * LEPDRV_Shutdown - shutdown the Lepton driver and camera
+ * LEPDRV_GetNextLogEntry - get the next log entry from the driver
  *********************************************************************/
-int LEPDRV_Shutdown(LEPDRV_SessionHandle hndl) {
+int LEPDRV_GetNextLogEntry(LEPDRV_SessionHandle hndl,
+                           LEPDRV_LogLevel *level,
+                           char *buffer,
+                           size_t bufferLen) {
     LEPDRV_Session *session = (LEPDRV_Session *) hndl;
     if (session == NULL)
         BAIL("SDK not initialized");
+    if (level == NULL)
+        BAIL("level pointer is NULL");
+    if (buffer == NULL)
+        BAIL("buffer pointer is NULL");
+    if (bufferLen == 0)
+        BAIL("bufferLen is zero");
 
-    LOG_DEBUG("Driver shutdown requested, waiting for capture thread");
-    void *rtnval = NULL;
-    session->shutdownRequested = true;
-    pthread_join(session->thread, &rtnval);
-    pthread_mutex_destroy(&session->frameMutex);
-    pthread_mutex_destroy(&session->logMutex);
-    pthread_cond_destroy(&session->frameCond);
+    if (session->logLength == 0)
+        return -1;
 
-    BAIL_ON_FAILED_SYS(close(session->spiFd));
-    BAIL_ON_FAILED_LEP(LEP_ClosePort(&session->portDesc));
+    pthread_mutex_lock(&session->logMutex);
+    LEPDRV_LogEntry *entry = session->logBuffer + session->logStartOffset;
+    *level = entry->level;
+    strncpy(buffer, entry->message, bufferLen - 1);
+    buffer[bufferLen - 1] = '\0';
+    session->logLength -= 1;
+    session->logStartOffset =
+        (session->logStartOffset + 1) % LOG_BUFFER_SIZE;
+    pthread_mutex_unlock(&session->logMutex);
 
-    if (session->isRunning)
-        LOG_ERROR("Somehow we shutdown but the session is still running");
-    if (session->threadRtn)
-        LOG_ERROR("SPI polling thread returned abnormally, rtn=%d", session->threadRtn);
-
-    LOG_DEBUG("Driver shutdown complete");
-    LEPDRV_SetLogFile(hndl, "stdout");
-    memset(session, 0, sizeof(LEPDRV_Session));
-    free(session);
-    return (0);
-}
-
-/*********************************************************************
- * LEPDRV_CheckIsRunning - check if the driver is running
- *********************************************************************/
-int LEPDRV_CheckIsRunning(LEPDRV_SessionHandle *hndlPtr, bool *isRunning) {
-    LEPDRV_Session *session = (LEPDRV_Session *) hndlPtr;
-    if (session == NULL)
-        BAIL("SDK not initialized");
-    if (isRunning == NULL)
-        BAIL("isRunning is NULL");
-
-    *isRunning = session->isRunning;
     return 0;
 }
 
@@ -544,39 +344,6 @@ int LEPDRV_SetTemperatureUnits(LEPDRV_SessionHandle hndl,
     session->tempUnit = unit;
     return 0;
 }
-
-/*********************************************************************
- * LEPDRV_SetLogFile - set the log file for driver messages
- *********************************************************************/
-int LEPDRV_SetLogFile(LEPDRV_SessionHandle hndl, char *logFilePath) {
-    LEPDRV_Session *session = (LEPDRV_Session *) hndl;
-    if (session == NULL)
-        BAIL("SDK not initialized");
-    int rtn = 0;
-
-    pthread_mutex_lock(&session->logMutex);
-    if (session->logFile != NULL && session->logFile != stdout &&
-        session->logFile != stderr)
-        fclose(session->logFile);
-    if (logFilePath == NULL)
-        session->logFile = NULL;
-    else if (strncmp(logFilePath, "stdout", 6) == 0)
-        session->logFile = stdout;
-    else if (strncmp(logFilePath, "stderr", 6) == 0)
-        session->logFile = stderr;
-    else {
-        FILE *newLogFile = fopen(logFilePath, "w");
-        if (newLogFile == NULL) {
-            LOG_ERROR("Could not open log file %s", logFilePath);
-            rtn = -1;
-        } else
-            session->logFile = newLogFile;
-    }
-    pthread_mutex_unlock(&session->logMutex);
-
-    return rtn;
-}
-
 /*********************************************************************
  * LEPDRV_CameraDisable - disable the camera and put it into power
  *                          down mode
@@ -645,7 +412,7 @@ int LEPDRV_CameraEnable(LEPDRV_SessionHandle hndl) {
         LEP_SetOemVideoOutputEnable(&session->portDesc, LEP_OEM_ENABLE));
 
     BAIL_ON_FAILED_LEP(LEP_GetSysStatus(&session->portDesc, &statusDesc));
-    LOG_INFO("STARTUP Camera status: %d", statusDesc.camStatus);
+    LOG_DEBUG("STARTUP Camera status: %d", statusDesc.camStatus);
 
     while (statusDesc.camStatus != LEP_SYSTEM_FLAT_FIELD_IN_PROCESS) {
         usleep(250000);
@@ -655,4 +422,214 @@ int LEPDRV_CameraEnable(LEPDRV_SessionHandle hndl) {
 
     LOG_DEBUG("LEPDRV_CameraEnable() COMPLETE");
     return 0;
+}
+
+/*********************************************************************
+ * LEPDRV_Shutdown - shutdown the Lepton driver and camera
+ *********************************************************************/
+int LEPDRV_Shutdown(LEPDRV_SessionHandle hndl) {
+    LEPDRV_Session *session = (LEPDRV_Session *) hndl;
+    if (session == NULL)
+        BAIL("SDK not initialized");
+
+    LOG_DEBUG("Driver shutdown requested, waiting for capture thread");
+    void *rtnval = NULL;
+    session->shutdownRequested = true;
+    pthread_join(session->thread, &rtnval);
+    pthread_mutex_destroy(&session->frameMutex);
+    pthread_mutex_destroy(&session->logMutex);
+    pthread_cond_destroy(&session->frameCond);
+
+    BAIL_ON_FAILED_SYS(close(session->spiFd));
+    BAIL_ON_FAILED_LEP(LEP_ClosePort(&session->portDesc));
+
+    if (session->isRunning)
+        LOG_ERROR("Somehow we shutdown but the session is still running");
+    if (session->threadRtn)
+        LOG_ERROR("SPI polling thread returned abnormally, rtn=%d", session->threadRtn);
+
+    LOG_DEBUG("Driver shutdown complete");
+
+    if (session->logFile != NULL && session->logFile != stdout &&
+        session->logFile != stderr)
+        fclose(session->logFile);
+    memset(session, 0, sizeof(LEPDRV_Session));
+    free(session);
+    return (0);
+}
+
+/*********************************************************************
+ * safeRead - read exactly len bytes from fd into buf
+ *********************************************************************/
+int _safeRead(LEPDRV_Session *session, int fd, void *buf, size_t len) {
+    size_t totalRead = 0;
+    while (totalRead < len) {
+        ssize_t bytesRead =
+            read(fd, (uint8_t *) buf + totalRead, len - totalRead);
+        if (bytesRead < 0)
+            BAIL("read failed, error=%s", strerror(errno));
+        totalRead += bytesRead;
+    }
+
+    return totalRead;
+}
+
+/*********************************************************************
+ * _driverMain - Driver logic main loop
+ *********************************************************************/
+int _driverMain(LEPDRV_Session *session) {
+    uint8_t buff[PACKETS_PER_FRAME][PACKET_SIZE];
+    const int maxFailedAttempts = 30;
+    const int pixelsPerFrame = FRAME_WIDTH * FRAME_HEIGHT;
+    int failedAttempsRemaining = maxFailedAttempts;
+    int matchingCrcCount = 0;
+    ssize_t bytesRead;
+    CRC16 lastCrc = 0;
+
+    while (session->shutdownRequested == false && failedAttempsRemaining > 0) {
+        // Read from SPI until we see the start of a frame
+        int tries = 100;
+        BAIL_ON_FAILED_SYS(
+            _safeRead(session, session->spiFd, buff[0], PACKET_SIZE));
+        while ((buff[0][0] & 0x0F) != 0 && buff[0][1] != 0 && tries-- > 0) {
+            usleep(10000);
+            BAIL_ON_FAILED_SYS(
+                _safeRead(session, session->spiFd, buff[0], PACKET_SIZE));
+        }
+        if (tries == 0)
+            continue;
+
+        // After seeing the start of a frame, read the rest of the packets
+        int goodPackets = 1;
+        for (int p = 1; p < PACKETS_PER_FRAME; p++, goodPackets++) {
+            BAIL_ON_FAILED_SYS(
+                _safeRead(session, session->spiFd, buff[p], PACKET_SIZE));
+            if ((buff[p][0] & 0x0F) != 0 || buff[p][1] != p)
+                break;
+        }
+
+        // If we didn't see all the packetes in the frame, reboot the camera
+        if (goodPackets != PACKETS_PER_FRAME) {
+            LOG_WARNING("Bad frame received (%d/%d packets), rebooting camera",
+                        goodPackets, PACKETS_PER_FRAME);
+            BAIL_ON_FAILED_LEP(LEPDRV_CameraDisable(session));
+            BAIL_ON_FAILED_LEP(LEPDRV_CameraEnable(session));
+            failedAttempsRemaining--;
+            continue;
+        }
+
+        // Updated the shared frame buffer and signal any waiters
+        float localBuffer[pixelsPerFrame];
+        for (int i = 0; i < pixelsPerFrame; i++) {
+            int r = i / FRAME_WIDTH, c = i % FRAME_WIDTH;
+            uint16_t v = (buff[r][4 + 2 * c] << 8) + buff[r][4 + 2 * c + 1];
+            float k = (float) v * 0.01f;
+            if (session->tempUnit == LEPDRV_TEMP_UNITS_CELCIUS)
+                k = k - 273.15f;
+            else if (session->tempUnit == LEPDRV_TEMP_UNITS_FAHRENHEIT)
+                k = ((k - 273.15f) * 9.0f / 5.0f) + 32.0f;
+            localBuffer[i] = k;
+        }
+
+        // Only wake up a getFrame caller if this frame is unique
+        CRC16 crc = CalcCRC16Bytes(sizeof(localBuffer), (char *) localBuffer);
+        if (lastCrc != crc) {
+            pthread_mutex_lock(&session->frameMutex);
+            memcpy(session->frameBuffer, localBuffer, sizeof(localBuffer));
+            session->hasFrame = true;
+            pthread_cond_signal(&session->frameCond);
+            pthread_mutex_unlock(&session->frameMutex);
+            lastCrc = crc;
+            matchingCrcCount = 0;
+            failedAttempsRemaining = maxFailedAttempts;
+        }
+
+        // Every now and then, we see the camera start to return the same
+        // frame over and over again.  If we see that happening for roughly
+        // a full second, reboot the camera
+        if (matchingCrcCount++ > 27) {
+            LOG_WARNING("Stale frames detected, rebooting camera");
+            BAIL_ON_FAILED_LEP(LEPDRV_CameraDisable(session));
+            BAIL_ON_FAILED_LEP(LEPDRV_CameraEnable(session));
+            matchingCrcCount = 0;
+            failedAttempsRemaining--;
+            continue;
+        }
+    }
+
+    if (failedAttempsRemaining == 0)
+        BAIL("Too many consecutive frame capture failures, exiting");
+
+    LOG_DEBUG("Driver thread exiting");
+    return 0;
+}
+
+/*********************************************************************
+ * _spiPollingThreadMain - pthread entry point
+ *********************************************************************/
+void *_spiPollingThreadMain(void *arg) {
+    LEPDRV_Session *session = (LEPDRV_Session *) arg;
+    session->isRunning = true;
+    session->threadRtn = _driverMain(session);
+    if (session->threadRtn != 0) {
+        pthread_mutex_lock(&session->frameMutex);
+        session->hasFrame = false;
+        pthread_cond_signal(&session->frameCond);
+        pthread_mutex_unlock(&session->frameMutex);
+    }
+
+    session->isRunning = false;
+    return NULL;
+}
+/*********************************************************************
+ * _driverLog - log an error message with variable arguments
+ *********************************************************************/
+void _driverLog(LEPDRV_Session *session,
+                const char *file,
+                const int line,
+                const LEPDRV_LogLevel logLevel,
+                const char *format, ...) {
+    time_t rawtime;
+    struct tm *timeinfo;
+    char timeStr[80], msgStr[4096];
+    va_list args;
+    static const char *levelStrings[] = {
+        "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"};
+
+    time(&rawtime);
+    timeinfo = localtime(&rawtime);
+    strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M:%S", timeinfo);
+
+    va_start(args, format);
+    vsnprintf(msgStr, sizeof(msgStr), format, args);
+    va_end(args);
+
+    if (session == NULL) {
+        fprintf(stderr, "%s [%s] %s:%d - %s\n",
+                timeStr, levelStrings[logLevel], file, line, msgStr);
+        return;
+    }
+
+    pthread_mutex_lock(&session->logMutex);
+    if (session->logFile != NULL) {
+        fprintf(session->logFile, "%s [%s] %s:%d - %s\n",
+                timeStr, levelStrings[logLevel], file, line, msgStr);
+        fflush(session->logFile);
+    } else {
+        if (session->logLength == LOG_BUFFER_SIZE) {
+            fprintf(stderr, "%s [WARNING] - memory log truncated\n", timeStr);
+            session->logLength -= 1;
+            session->logStartOffset =
+                (session->logStartOffset + 1) % LOG_BUFFER_SIZE;
+        }
+
+        LEPDRV_LogEntry *entry = session->logBuffer +
+                                 (session->logStartOffset + session->logLength) % LOG_BUFFER_SIZE;
+        memcpy(&entry->timestamp, &rawtime, sizeof(time_t));
+        strncpy(entry->message, msgStr, LOG_MAX_MESSAGE_LENGTH - 1);
+        entry->message[LOG_MAX_MESSAGE_LENGTH - 1] = '\0';
+        entry->level = logLevel;
+        session->logLength += 1;
+    }
+    pthread_mutex_unlock(&session->logMutex);
 }

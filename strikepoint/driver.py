@@ -23,6 +23,7 @@ class LeptonDriver(FrameProvider):
             ("versionMinor", ctypes.c_uint8),
             ("framwidth", ctypes.c_uint16),
             ("frameHeight", ctypes.c_uint16),
+            ("maxLogEntries", ctypes.c_uint32),
         ]
 
     _logLevelMap = {
@@ -35,9 +36,8 @@ class LeptonDriver(FrameProvider):
 
     allFnNameList = [
         "LEPDRV_Shutdown", "LEPDRV_Init", "LEPDRV_GetFrame",
-        "LEPDRV_CameraDisable", "LEPDRV_CameraEnable",
-        "LEPDRV_SetTemperatureUnits", "LEPDRV_CheckIsRunning",
-        "LEPDRV_SetLogFile", "LEPDRV_StartPolling", "LEPDRV_GetNextLogEntry"]
+        "LEPDRV_CameraDisable", "LEPDRV_SetTemperatureUnits", 
+        "LEPDRV_StartPolling", "LEPDRV_GetNextLogEntry"]
 
     def __init__(self, logPath: str = None):
         libPath = LeptonDriver.find_library_path()
@@ -59,13 +59,8 @@ class LeptonDriver(FrameProvider):
             ctypes.c_void_p, ctypes.POINTER(ctypes.c_float)]
         self.fnMap["LEPDRV_SetTemperatureUnits"].argtypes = [
             ctypes.c_void_p, ctypes.c_int]
-        self.fnMap["LEPDRV_CheckIsRunning"].argtypes = [
-            ctypes.c_void_p, ctypes.POINTER(ctypes.c_bool)]
-        self.fnMap["LEPDRV_SetLogFile"].argtypes = [
-            ctypes.c_void_p, ctypes.c_char_p]
         self.fnMap["LEPDRV_GetNextLogEntry"].argtypes = [
-            ctypes.c_void_p, ctypes.POINTER(ctypes.c_bool),
-            ctypes.POINTER(ctypes.c_int), ctypes.c_char_p,
+            ctypes.c_void_p, ctypes.POINTER(ctypes.c_int), ctypes.c_char_p,
             ctypes.c_size_t]
 
         info = LeptonDriver.LEPDRV_DriverInfo()
@@ -78,13 +73,15 @@ class LeptonDriver(FrameProvider):
 
         self.frameWidth = info.framwidth
         self.frameHeight = info.frameHeight
+        self.maxLogEntries = info.maxLogEntries
 
-    def _makeApiCall(self, fnName: str, *args):
+    def _makeApiCall(self, fnName: str, *args, throwOnError=True):
         if fnName not in self.allFnNameList:
             raise RuntimeError(f"Method '{fnName}' not a valid API call")
         rc = self.fnMap[fnName](self.hndl, *args)
-        if rc != 0:
+        if rc != 0 and throwOnError:
             raise RuntimeError(f"Call to {fnName} failed rc={rc}")
+        return rc
 
     def startPolling(self):
         """Start the SPI poling thread.
@@ -103,43 +100,23 @@ class LeptonDriver(FrameProvider):
         """
         self._makeApiCall("LEPDRV_Shutdown")
 
-    def isRunning(self) -> bool:
-        """Check if the driver is running.
-        """
-        isRunning = ctypes.c_bool()
-        self._makeApiCall("LEPDRV_CheckIsRunning", ctypes.byref(isRunning))
-        return isRunning.value
-
-    def setLogFile(self, logFile: str):
-        """Set the log file
-        """
-        logFile = bytes(logFile, encoding="utf8") if logFile else 0
-        self._makeApiCall(
-            "LEPDRV_SetLogFile", ctypes.c_char_p(logFile))
-
     def getNextLogEntry(self):
         """Get the next log entry from the driver.
         """
-        hasEntry = ctypes.c_bool()
         level = ctypes.c_int()
         bufferLen = 1024
         buffer = ctypes.create_string_buffer(bufferLen)
-        self._makeApiCall(
-            "LEPDRV_GetNextLogEntry", ctypes.byref(hasEntry),
-            ctypes.byref(level), buffer, ctypes.c_size_t(bufferLen))
-        if not hasEntry.value:
-            return None
-        return (self._logLevelMap[level.value], buffer.value.decode('utf8'))
+        rc = self._makeApiCall(
+            "LEPDRV_GetNextLogEntry", ctypes.byref(level), buffer,
+            ctypes.c_size_t(bufferLen), throwOnError=False)
+        if rc == 0:
+            return (self._logLevelMap[level.value], buffer.value.decode('utf8'))
+        return None
 
     def setTemperatureUnits(self, unit: TemperatureUnit):
         """Set temperature units on the driver.
         """
         self._makeApiCall("LEPDRV_SetTemperatureUnits", ctypes.c_int(unit))
-
-    def cameraEnable(self):
-        """Enable the camera.
-        """
-        self._makeApiCall("LEPDRV_CameraEnable")
 
     def cameraDisable(self):
         """Disable the camera.

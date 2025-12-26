@@ -12,6 +12,7 @@ from strikepoint.frames import FrameInfoWriter
 from strikepoint.imaging import CalibrationEngine, StrikeDetectionEngine
 from strikepoint.dash.events import DashEventQueueManager
 from strikepoint.dash.content import ContentManager
+from strikepoint.logger import get_logger
 
 
 class StrikePointDashApp:
@@ -201,7 +202,8 @@ class StrikePointDashApp:
                         self.eventQueue.fireEvent('add-card', card)
 
             except Exception as ex:
-                print(f"StrikePointDashApp thread exception: {ex}")
+                get_logger().error(
+                     f"StrikePointDashApp thread exception: {ex}")
 
     def run(self, host="0.0.0.0", port=8050, debug=False, threaded=True):
         # threaded=True helps keep the MJPEG stream and Dash callbacks responsive
