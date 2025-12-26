@@ -2,14 +2,13 @@
     "configurations": [
         {
             "name": "Linux",
+            "compileCommands": "${workspaceFolder}/build/compile_commands.json",
+            "intelliSenseMode": "gcc-x64",
+            "cStandard": "c11",
+            "cppStandard": "c++14",
             "includePath": [
-                "${workspaceFolder}/../LeptonRPiSDK"
-            ],
-            "defines": [],
-            "compilerPath": "/usr/bin/gcc",
-            "cStandard": "c17",
-            "cppStandard": "gnu++17",
-            "intelliSenseMode": "linux-gcc-arm64"
+                "${workspaceFolder}/**"
+            ]
         }
     ],
     "version": 4

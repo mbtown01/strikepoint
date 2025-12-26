@@ -16,8 +16,11 @@
     },
     "C_Cpp.formatting": "clangFormat",
     "C_Cpp.clang_format_style": "file",
-    "C_Cpp.clang_format_formatOnSave": true,
     "C_Cpp.clang_format_fallbackStyle": "Microsoft",
     "testMate.cpp.test.executables": "lepton/Debug/gtest_driver",
-    "cmake.sourceDirectory": "/home/mbtowns/strikepoint/lepton"
+    "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+    "cmake.configureOnOpen": true,
+    "cmake.configureArgs": ["-DCMAKE_BUILD_TYPE=Debug"],
+    "cmake.buildDirectory": "${workspaceFolder}/lepton/Debug",
+    "cmake.sourceDirectory": "${workspaceFolder}/lepton"
 }
