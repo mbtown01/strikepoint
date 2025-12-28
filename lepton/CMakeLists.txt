@@ -17,9 +17,9 @@ include_directories(${LEPTON_DIR}/sdk)
 include_directories(${LEPTON_DIR}/src)
 
 # Convert glob to actual source list (only .c files)
-file(GLOB LEPTON_C_SRCS "${LEPTON_DIR}/sdk/*.c" "${LEPTON_DIR}/src/*.c") 
+file(GLOB LEPTON_SRCS "${LEPTON_DIR}/sdk/*.c" "${LEPTON_DIR}/src/*.c*") 
 
-add_library(lepton_objs OBJECT ${LEPTON_C_SRCS})
+add_library(lepton_objs OBJECT ${LEPTON_SRCS})
 set_target_properties(lepton_objs PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # Optionally set include dirs for the object target

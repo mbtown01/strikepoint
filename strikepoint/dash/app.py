@@ -9,9 +9,10 @@ from queue import Queue
 from strikepoint.database import Database
 from strikepoint.producer import FrameProducer
 from strikepoint.frames import FrameInfoWriter
-from strikepoint.imaging import CalibrationEngine, StrikeDetectionEngine
+from strikepoint.imaging import StrikeDetectionEngine
 from strikepoint.dash.events import DashEventQueueManager
 from strikepoint.dash.content import ContentManager
+from strikepoint.dash.calibrate import CalibrationDashUi
 from strikepoint.logger import get_logger
 
 
@@ -21,22 +22,29 @@ class StrikePointDashApp:
         self.app = Dash(__name__, title='StrikePoint', serve_locally=True)
         self.producer = producer
         self.contentManager = ContentManager(self.app)
-        self.eventQueue = DashEventQueueManager(self.app)
-        self.calibrationEngine = CalibrationEngine()
+        self.eventQueueManager = DashEventQueueManager(self.app)
         self.strikeDetectionEngine = StrikeDetectionEngine()
         self.database = Database()
         self.driverThread = Thread(target=self._threadMain, daemon=True)
         self.frameWriter = None
         self.frameWriterLock = Lock()
-
         self.thermalVisualTransform = self.database.loadLatestTransform()
+        self.calibrationUi = CalibrationDashUi(
+            app=self.app,
+            db=self.database,
+            contentManager=self.contentManager,
+            eventQueueManager=self.eventQueueManager,
+        )
+
         self.driverThread.start()
 
-        self.eventQueue.registerEvent(
+        self.eventQueueManager.registerEvent(
             'add-card', self._addCardHandler,
             [("cards-div", "children")])
-        self.eventQueue.registerEvent(
-            'update-calibration', self._updateCalibrationHandler,
+        self.eventQueueManager.registerEvent(
+            'update-calibration', self._updateCalibrationHandler, [])
+        self.eventQueueManager.registerEvent(
+            'update-calibration-status', self._updateCalibrationStatusHandler,
             [("calibration-status-badge", "children"),
              ("calibration-status-badge", "color")], needsEventData=False)
 
@@ -46,18 +54,18 @@ class StrikePointDashApp:
         )
         def detect_reload(data):
             if data is None:
-                self.eventQueue.fireEvent('update-calibration')
+                self.eventQueueManager.fireEvent('update-calibration-status')
 
-        @self.app.callback(Input("recalibrate-btn", "n_clicks"))
+        @self.app.callback(Input("calibrate-btn", "n_clicks"),
+                           prevent_initial_call=True)
         def on_recalibrate(_):
-            self.thermalVisualTransform = None
-            self.eventQueue.fireEvent('update-calibration')
+            self.eventQueueManager.fireEvent('update-calibration-status')
+            self.calibrationUi.launchCalibrationDialog()
 
         @self.app.callback(Output("start-rec-btn", "children"),
-                           Input("start-rec-btn", "n_clicks"))
-        def on_start_record(n_clicks):
-            if n_clicks is None or n_clicks % 2 == 0:
-                return no_update
+                           Input("start-rec-btn", "n_clicks"),
+                           prevent_initial_call=True)
+        def on_start_record(_):
             try:
                 with self.frameWriterLock:
                     if self.frameWriter is None:
@@ -71,13 +79,14 @@ class StrikePointDashApp:
                 return "Start Recording"
 
         videoSrcVisual = \
-            self.contentManager.registerVideoFrame('visual', None)
+            self.contentManager.getVideoFrameEndpoint('visual')
         videoSrcThermal = \
-            self.contentManager.registerVideoFrame('thermal', None)
+            self.contentManager.getVideoFrameEndpoint('thermal')
 
         self.app.layout = html.Div([
-            *self.eventQueue.finalElements(),
+            *self.eventQueueManager.finalElements(),
             dcc.Store(id="session-store", storage_type="session"),
+            self.calibrationUi.modal,
             dbc.NavbarSimple([
                 dbc.NavItem(
                     dbc.Badge("Not Calibrated", color="warning", className="me-1",
@@ -105,9 +114,9 @@ class StrikePointDashApp:
                     html.Img(id="thermalLive", src=videoSrcThermal,
                                 style={"width": "100%", "objectFit": "cover"}),
                     dbc.Button("Start Recording", id="start-rec-btn",
-                               n_clicks=0, color="primary", style={"width": "100%"}),
-                    dbc.Button("Recalibrate", id="recalibrate-btn",
-                               n_clicks=0, color="primary", style={"width": "100%"}),
+                               color="primary", style={"width": "100%"}),
+                    dbc.Button("Recalibrate", id="calibrate-btn",
+                               color="primary", style={"width": "100%"}),
                 ], style={
                     "position": "fixed",
                     "left": "0",
@@ -140,16 +149,25 @@ class StrikePointDashApp:
 
         return cards_div_children
 
-    def _updateCalibrationHandler(self,
-                                  calibration_status_children,
-                                  calibration_status_color):
+    def _updateCalibrationStatusHandler(self,
+                                        calibration_status_children,
+                                        calibration_status_color):
         calibration_status_children = "Not Calibrated"
         calibration_status_color = "warning"
         if self.thermalVisualTransform is not None:
             calibration_status_children = "Ready"
             calibration_status_color = "success"
-
         return calibration_status_children, calibration_status_color
+    
+    def _updateCalibrationHandler(self, eventData: list):
+        self.thermalVisualTransform = eventData[-1]
+        self.database.saveTransform(self.thermalVisualTransform)
+        self.strikeDetectionEngine.reset()
+        card = dbc.Card([
+            dbc.Alert("Calibration Complete", color='success'),
+        ], style={"marginBottom": "4px"})
+        self.eventQueueManager.fireEvent('add-card', card)
+        self.eventQueueManager.fireEvent('update-calibration-status')
 
     def _threadMain(self):
         frameSeq = 0
@@ -167,22 +185,7 @@ class StrikePointDashApp:
                     if self.frameWriter is not None:
                         self.frameWriter.writeFrameInfo(frameInfo)
 
-                if self.thermalVisualTransform is None:
-                    result = self.calibrationEngine.calibrateFrames(
-                        frameSeq, frameInfo)
-                    if result is not None:
-                        self.thermalVisualTransform = result['transform']
-                        self.database.saveTransform(
-                            self.thermalVisualTransform)
-                        self.strikeDetectionEngine.reset()
-                        contentPath = self.contentManager.registerImage(
-                            'calibrate', result['image'])
-                        card = dbc.Card([
-                            dbc.Alert("Calibration Complete", color='success'),
-                            dbc.CardBody(html.Img(src=contentPath)),
-                        ], style={"marginBottom": "4px"})
-                        self.eventQueue.fireEvent('add-card', card)
-                        self.eventQueue.fireEvent('update-calibration')
+                self.calibrationUi.process(frameSeq, frameInfo)
 
                 # TODO: This is a race condition if recalibrate is pressed while here
                 if self.thermalVisualTransform is not None:
@@ -199,11 +202,11 @@ class StrikePointDashApp:
                             dbc.Alert(headerText, color=color),
                             dbc.CardBody(html.Img(src=contentPath)),
                         ], style={"marginBottom": "4px"})
-                        self.eventQueue.fireEvent('add-card', card)
+                        self.eventQueueManager.fireEvent('add-card', card)
 
             except Exception as ex:
                 get_logger().error(
-                     f"StrikePointDashApp thread exception: {ex}")
+                    f"StrikePointDashApp thread exception: {ex}")
 
     def run(self, host="0.0.0.0", port=8050, debug=False, threaded=True):
         # threaded=True helps keep the MJPEG stream and Dash callbacks responsive

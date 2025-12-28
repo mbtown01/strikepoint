@@ -1,6 +1,12 @@
 #ifndef __LEPTON_H__
 #define __LEPTON_H__
 
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -60,5 +66,9 @@ int LEPDRV_GetFrame(LEPDRV_SessionHandle hndl, float *frameBuffer);
 
 // Close a session
 int LEPDRV_Shutdown(LEPDRV_SessionHandle hndl);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

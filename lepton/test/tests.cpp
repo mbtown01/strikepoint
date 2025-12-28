@@ -4,13 +4,7 @@ extern "C" {
 #include "driver.h"
 }
 
-// The original C tests asserted error return (-1) for NULL/invalid args.
-// Here we follow the same expectations; if your driver returns a different
-// error code change EXPECT_EQ(..., -1) -> EXPECT_NE(..., 0) as appropriate.
-
 TEST(DriverApi, InitNullArgs) {
-    // original C test called LEPDRV_Init(NULL, NULL, NULL)
-    // keep the same call - adjust if your header has different signature.
     int rc = LEPDRV_Init(NULL, NULL, NULL);
     EXPECT_EQ(rc, -1);
 }
@@ -95,7 +89,7 @@ TEST(DriverApi, SimpleFramePoll) {
     EXPECT_EQ(rc, 0);
 }
 
-TEST(DriverApi, RecoveryFramePoll) {
+TEST(DriverApi, RecoveryFramePollOnStartup) {
     LEPDRV_SessionHandle hndl;
     LEPDRV_DriverInfo info;
     int rc;

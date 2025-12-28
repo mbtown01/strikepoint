@@ -1,6 +1,9 @@
 import cv2
 import numpy as np
 
+from enum import IntEnum
+from collections import defaultdict
+
 
 def findBrightestCircles(frame, targetCount, *,
                          factor: float = 1.5,
@@ -44,7 +47,121 @@ def drawBrightestCircles(frame, circles: list, *, targetCount: int = None):
     return frame
 
 
-class CalibrationEngine:
+class CalibrationEngine1Ball:
+    """Engine to perform calibration between thermal and visual frames.
+    """
+
+    class CalibrationPhase(IntEnum):
+        INACTIVE = 0
+        POINT_1 = 1
+        POINT_2 = 2
+        POINT_3 = 3
+        COMPLETE = 4
+
+    def __init__(self):
+        self.runningPointList = list()
+        self.phaseResultMap = dict()
+        self.lastCalibFrame = -1
+        self.phase = CalibrationEngine1Ball.CalibrationPhase.INACTIVE
+
+        self.processHandlerMap = {
+            CalibrationEngine1Ball.CalibrationPhase.INACTIVE:
+                self._processInactive,
+            CalibrationEngine1Ball.CalibrationPhase.POINT_1:
+                self._processPoint,
+            CalibrationEngine1Ball.CalibrationPhase.POINT_2:
+                self._processPoint,
+            CalibrationEngine1Ball.CalibrationPhase.POINT_3:
+                self._processFinalize,
+            CalibrationEngine1Ball.CalibrationPhase.COMPLETE:
+                self._processInactive,
+        }
+
+    def start(self):
+        self.runningPointList.clear()
+        self.phaseResultMap.clear()
+        self.lastCalibFrame = -1
+        self.phase = CalibrationEngine1Ball.CalibrationPhase.POINT_1
+
+    def process(self, frameSeq: int, frameInfo: dict):
+        result = self.processHandlerMap[self.phase](frameSeq, frameInfo)
+        if result is not None:
+            self.phase = CalibrationEngine1Ball.CalibrationPhase(
+                self.phase + 1)
+        return result
+
+    def _processInactive(self, frameSeq: int, frameInfo: dict):
+        return None
+
+    def _processPoint(self, frameSeq: int, frameInfo: dict):
+        visFrame = frameInfo.rgbFrames['visual']
+        thermFrame = frameInfo.rgbFrames['thermal']
+        visCircles = findBrightestCircles(visFrame, 1, throwOnFail=False)
+        thermCircles = findBrightestCircles(thermFrame, 1, throwOnFail=False)
+        if (len(visCircles) != 1) or (len(thermCircles) != 1):
+            return None
+
+        if frameSeq != self.lastCalibFrame + 1:
+            self.runningPointList.clear()
+        self.lastCalibFrame = frameSeq
+
+        visCircle, visR = np.array(visCircles[0][:2]), visCircles[0][2]
+        thermCircle, thermR = np.array(thermCircles[0][:2]), thermCircles[0][2]
+        for r in self.phaseResultMap.values():
+            if np.linalg.norm(visCircle - r['visPoint']) < 3*r['visR']:
+                return None
+
+        self.runningPointList.append((visCircle, thermCircle))
+        if len(self.runningPointList) == 7:
+            cv2.circle(visFrame, visCircle, 3*visR, (0, 255, 0), 2)
+            cv2.circle(visFrame, visCircle, 2, (0, 0, 255), 3)
+            cv2.circle(thermFrame, thermCircle, 3*thermR, (0, 255, 0), 2)
+            cv2.circle(thermFrame, thermCircle, 2, (0, 0, 255), 3)
+            visFinalP = sum(a[0] for a in self.runningPointList[-5:]) / 5.0
+            visFinalP = (int(visFinalP[0]), int(visFinalP[1]))
+            thermFinalP = sum(a[1] for a in self.runningPointList[-5:]) / 5.0
+            thermFinalP = (int(thermFinalP[0]), int(thermFinalP[1]))
+            self.runningPointList.clear()
+            self.phaseResultMap[self.phase] = {
+                'phaseCompleted': self.phase,
+                'visDemo': visFrame,
+                'visPoint': visFinalP,
+                'visR': visR,
+                'thermDemo': thermFrame,
+                'thermPoint': thermFinalP,
+                'thermR': thermR,
+            }
+
+            return self.phaseResultMap[self.phase]
+
+    def _processFinalize(self, frameSeq: int, frameInfo: dict):
+        if self._processPoint(frameSeq, frameInfo) is not None:
+            visMatrix = np.float32(
+                [r['visPoint'] for r in self.phaseResultMap.values()])
+            thermMatrix = np.float32(
+                [r['thermPoint'] for r in self.phaseResultMap.values()])
+            transformMatrix = cv2.getAffineTransform(thermMatrix, visMatrix)
+
+            thermFrame = frameInfo.rgbFrames['thermal']
+            Hv, Wv = thermFrame.shape[:2]
+            thermDemo = thermFrame * 0
+            for r in self.phaseResultMap.values():
+                cv2.circle(thermDemo, r['thermPoint'], 3 *
+                        r['thermR'], (255, 255, 0), 1)
+            thermWarped = cv2.warpAffine(
+                thermDemo, transformMatrix, (Wv, Hv),
+                flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
+                borderValue=0)
+
+            return {
+                'phaseCompleted': self.phase,
+                'visDemo': thermWarped,
+                'thermDemo': thermDemo,
+                'transformMatrix': transformMatrix,
+            }
+
+
+class CalibrationEngine3Balls:
     """Engine to perform calibration between thermal and visual frames.
     """
 

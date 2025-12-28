@@ -51,12 +51,18 @@ class ContentManager:
         with self.frameInfoCondition:
             self.frameInfoCondition.notify_all()
 
+    def getVideoFrameEndpoint(self, name: str) -> str:
+        return f"/content/video/{name}.mjpg"
+    
+    def getImageEndpoint(self, name: str) -> str:
+        return f"/content/image/{name}.jpg"
+
     def registerVideoFrame(self, name: str, content: np.array):
         self.videoFrameMap[name] = content
-        return f"/content/video/{name}.mjpg"
+        return self.getVideoFrameEndpoint(name)
 
     def registerImage(self, name: str, content: np.array):
         contentName = f"{name}_{self.imageSeq:08d}"
         self.imageSeq += 1
         self.imageFrameMap[contentName] = content
-        return f"/content/image/{contentName}.jpg"
+        return self.getImageEndpoint(contentName)

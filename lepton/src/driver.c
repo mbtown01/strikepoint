@@ -57,7 +57,16 @@
         }                                                             \
     } while (0)
 
-#define BAIL_ON_FAILED_SYS(cmd)                       \
+#define BAIL_ON_FAILED_SYS(cmd)                                            \
+    do {                                                                   \
+        int rtn = cmd;                                                     \
+        if (rtn < 0) {                                                     \
+            LOG_ERROR("'%s' returned %d: %s", #cmd, rtn, strerror(errno)); \
+            return -1;                                                     \
+        }                                                                  \
+    } while (0)
+
+#define BAIL_ON_FAILED(cmd)                           \
     do {                                              \
         int rtn = cmd;                                \
         if (rtn < 0) {                                \
@@ -201,7 +210,7 @@ int LEPDRV_Init(LEPDRV_SessionHandle *hndlPtr,
 
     BAIL_ON_FAILED_LEP(LEP_RunSysFFCNormalization(&session->portDesc));
     BAIL_ON_FAILED_LEP(
-        LEP_SetOemVideoOutputEnable(&session->portDesc, LEP_OEM_ENABLE));
+        LEP_SetOemVideoOutputEnable(&session->portDesc, LEP_VIDEO_OUTPUT_ENABLE));
 
     // Show status some known interesting settings
     LEP_SYS_FLIR_SERIAL_NUMBER_T serialNumber;
@@ -233,7 +242,7 @@ int LEPDRV_Init(LEPDRV_SessionHandle *hndlPtr,
 
     session = (LEPDRV_Session *) calloc(1, sizeof(LEPDRV_Session));
     if (session == NULL)
-        BAIL("Could not allocate memory for session");
+        BAIL("Could not allocate memory for session: %s", strerror(errno));
     memcpy(session, &localSession, sizeof(LEPDRV_Session));
     hndlPtr[0] = (LEPDRV_SessionHandle) session;
     return 0;
@@ -409,7 +418,7 @@ int LEPDRV_CameraEnable(LEPDRV_SessionHandle hndl) {
 
     BAIL_ON_FAILED_LEP(LEP_RunSysFFCNormalization(&session->portDesc));
     BAIL_ON_FAILED_LEP(
-        LEP_SetOemVideoOutputEnable(&session->portDesc, LEP_OEM_ENABLE));
+        LEP_SetOemVideoOutputEnable(&session->portDesc, LEP_VIDEO_OUTPUT_ENABLE));
 
     BAIL_ON_FAILED_LEP(LEP_GetSysStatus(&session->portDesc, &statusDesc));
     LOG_DEBUG("STARTUP Camera status: %d", statusDesc.camStatus);
@@ -435,10 +444,10 @@ int LEPDRV_Shutdown(LEPDRV_SessionHandle hndl) {
     LOG_DEBUG("Driver shutdown requested, waiting for capture thread");
     void *rtnval = NULL;
     session->shutdownRequested = true;
-    pthread_join(session->thread, &rtnval);
-    pthread_mutex_destroy(&session->frameMutex);
-    pthread_mutex_destroy(&session->logMutex);
-    pthread_cond_destroy(&session->frameCond);
+    BAIL_ON_FAILED_SYS(pthread_join(session->thread, &rtnval));
+    BAIL_ON_FAILED_SYS(pthread_mutex_destroy(&session->frameMutex));
+    BAIL_ON_FAILED_SYS(pthread_mutex_destroy(&session->logMutex));
+    BAIL_ON_FAILED_SYS(pthread_cond_destroy(&session->frameCond));
 
     BAIL_ON_FAILED_SYS(close(session->spiFd));
     BAIL_ON_FAILED_LEP(LEP_ClosePort(&session->portDesc));
@@ -489,12 +498,10 @@ int _driverMain(LEPDRV_Session *session) {
     while (session->shutdownRequested == false && failedAttempsRemaining > 0) {
         // Read from SPI until we see the start of a frame
         int tries = 100;
-        BAIL_ON_FAILED_SYS(
-            _safeRead(session, session->spiFd, buff[0], PACKET_SIZE));
+        _safeRead(session, session->spiFd, buff[0], PACKET_SIZE);
         while ((buff[0][0] & 0x0F) != 0 && buff[0][1] != 0 && tries-- > 0) {
             usleep(10000);
-            BAIL_ON_FAILED_SYS(
-                _safeRead(session, session->spiFd, buff[0], PACKET_SIZE));
+            _safeRead(session, session->spiFd, buff[0], PACKET_SIZE);
         }
         if (tries == 0)
             continue;
@@ -502,8 +509,7 @@ int _driverMain(LEPDRV_Session *session) {
         // After seeing the start of a frame, read the rest of the packets
         int goodPackets = 1;
         for (int p = 1; p < PACKETS_PER_FRAME; p++, goodPackets++) {
-            BAIL_ON_FAILED_SYS(
-                _safeRead(session, session->spiFd, buff[p], PACKET_SIZE));
+            _safeRead(session, session->spiFd, buff[p], PACKET_SIZE);
             if ((buff[p][0] & 0x0F) != 0 || buff[p][1] != p)
                 break;
         }
@@ -512,8 +518,8 @@ int _driverMain(LEPDRV_Session *session) {
         if (goodPackets != PACKETS_PER_FRAME) {
             LOG_WARNING("Bad frame received (%d/%d packets), rebooting camera",
                         goodPackets, PACKETS_PER_FRAME);
-            BAIL_ON_FAILED_LEP(LEPDRV_CameraDisable(session));
-            BAIL_ON_FAILED_LEP(LEPDRV_CameraEnable(session));
+            BAIL_ON_FAILED(LEPDRV_CameraDisable(session));
+            BAIL_ON_FAILED(LEPDRV_CameraEnable(session));
             failedAttempsRemaining--;
             continue;
         }
@@ -549,8 +555,8 @@ int _driverMain(LEPDRV_Session *session) {
         // a full second, reboot the camera
         if (matchingCrcCount++ > 27) {
             LOG_WARNING("Stale frames detected, rebooting camera");
-            BAIL_ON_FAILED_LEP(LEPDRV_CameraDisable(session));
-            BAIL_ON_FAILED_LEP(LEPDRV_CameraEnable(session));
+            BAIL_ON_FAILED(LEPDRV_CameraDisable(session));
+            BAIL_ON_FAILED(LEPDRV_CameraEnable(session));
             matchingCrcCount = 0;
             failedAttempsRemaining--;
             continue;
