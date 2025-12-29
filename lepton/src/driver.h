@@ -7,6 +7,9 @@ extern "C"
 #endif
 
 
+#define LEPDRV_VERSION_MAJOR 1
+#define LEPDRV_VERSION_MINOR 2
+
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>

@@ -9,7 +9,6 @@ from strikepoint.imaging import CalibrationEngine1Ball
 from strikepoint.dash.events import DashEventQueueManager
 from strikepoint.dash.content import ContentManager
 from strikepoint.frames import FrameInfo
-from strikepoint.logger import get_logger
 
 
 class CalibrationDashUi:
@@ -32,8 +31,9 @@ class CalibrationDashUi:
         self.eventQueueManager.registerEvent(
             'cal-update-dialog', self._updateDialogHandler,
             [("cal-div-1-1", "children"), ("cal-div-1-2", "children"),
-             ("cal-div-1-3", "children"), ("cal-div-2-1", "children"),
-             ("cal-div-2-2", "children"), ("cal-div-2-3", "children"),
+             ("cal-div-1-3", "children"), ("cal-div-1-4", "children"),
+             ("cal-div-2-1", "children"), ("cal-div-2-2", "children"),
+             ("cal-div-2-3", "children"), ("cal-div-2-4", "children"),
              ("cal-accept-btn", "disabled")],
             needsEventData=True)
 
@@ -53,7 +53,7 @@ class CalibrationDashUi:
         modalGridDivStyle = {
             'width': '100%',
             'height': '100%',
-            'backgroundColor': 'black',
+            # 'backgroundColor': 'black',
             'color': 'white',
             'display': 'grid',
             'placeItems': 'center',
@@ -95,13 +95,13 @@ class CalibrationDashUi:
                     dbc.Row(
                         list(dbc.Col(html.Div(f"{a}", id=f"cal-div-1-{a}",
                                               style=modalGridDivStyle))
-                             for a in range(1, 4)),
+                             for a in range(1, 5)),
                         className="mb-2",
                     ),
                     dbc.Row(
                         list(dbc.Col(html.Div(f"{a}", id=f"cal-div-2-{a}",
                                               style=modalGridDivStyle))
-                             for a in range(1, 4)),
+                             for a in range(1, 5)),
                         className="mb-2",
                     ),
                 ],
@@ -144,8 +144,8 @@ class CalibrationDashUi:
         return not isOpen
 
     def _updateDialogHandler(self,
-                             row1col1, row1col2, row1col3,
-                             row2col1, row2col2, row2col3,
+                             row1col1, row1col2, row1col3, row1col4,
+                             row2col1, row2col2, row2col3, row2col4,
                              acceptDisabled, eventData):
         videoSrcVisual = \
             self.contentManager.getVideoFrameEndpoint('visual')
@@ -169,6 +169,7 @@ class CalibrationDashUi:
                 src=videoSrcThermal, style=self.modalGridImageStyle)
             row1col2 = row2col2 = "2"
             row1col3 = row2col3 = "3"
+            row1col4 = row2col4 = "4"
         elif phaseCompleted == CalibrationEngine1Ball.CalibrationPhase.POINT_1:
             row1col1 = html.Img(
                 src=calibratedVisDemo, style=self.modalGridImageStyle)
@@ -188,11 +189,21 @@ class CalibrationDashUi:
             row2col3 = html.Img(
                 src=videoSrcThermal, style=self.modalGridImageStyle)
         elif phaseCompleted == CalibrationEngine1Ball.CalibrationPhase.POINT_3:
+            calibratedVisFinal = self.contentManager.registerImage(
+                'cal-vis-final', result['visFinal'])
+            calibratedThermFinal = self.contentManager.registerImage(
+                'cal-therm-final', result['thermFinal'])
             row1col3 = html.Img(
                 src=calibratedVisDemo, style=self.modalGridImageStyle)
             row2col3 = html.Img(
                 src=calibratedThermDemo, style=self.modalGridImageStyle)
+            row1col4 = html.Img(
+                src=calibratedVisFinal, style=self.modalGridImageStyle)
+            row2col4 = html.Img(
+                src=calibratedThermFinal, style=self.modalGridImageStyle)
             acceptDisabled = False
+        else:
+            raise ValueError(f"Unknown calibration phase: {phaseCompleted}")
 
-        return (row1col1, row1col2, row1col3,
-                row2col1, row2col2, row2col3, acceptDisabled)
+        return (row1col1, row1col2, row1col3, row1col4,
+                row2col1, row2col2, row2col3, row2col4, acceptDisabled)

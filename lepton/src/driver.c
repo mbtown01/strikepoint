@@ -138,8 +138,8 @@ int LEPDRV_Init(LEPDRV_SessionHandle *hndlPtr,
     session->logStartOffset = 0;
     session->logLength = 0;
 
-    info->versionMajor = 1;
-    info->versionMinor = 0;
+    info->versionMajor = LEPDRV_VERSION_MAJOR;
+    info->versionMinor = LEPDRV_VERSION_MINOR;
     info->frameWidth = FRAME_WIDTH;
     info->frameHeight = FRAME_HEIGHT;
     info->maxLogEntries = LOG_BUFFER_SIZE;
@@ -159,7 +159,13 @@ int LEPDRV_Init(LEPDRV_SessionHandle *hndlPtr,
             session->logFile = newLogFile;
     }
 
-    LOG_INFO("LEPTON Driver Starting Up...");
+    #ifndef DEBUG
+    LOG_INFO("Lepton driver v%d.%d DEBUG initializing...",
+             LEPDRV_VERSION_MAJOR, LEPDRV_VERSION_MINOR);
+    #else
+    LOG_INFO("Lepton driver v%d.%d RELEASE initializing...",
+              LEPDRV_VERSION_MAJOR, LEPDRV_VERSION_MINOR);
+    #endif
 
     LEP_STATUS_T statusDesc;
     unsigned char spiMode = SPI_MODE_3;

@@ -4,7 +4,6 @@ from flask import Response
 from dash import Dash, html, dcc, no_update
 from dash.dependencies import Input, Output, State
 from threading import Lock, Thread, Condition
-from queue import Queue
 
 from strikepoint.database import Database
 from strikepoint.producer import FrameProducer
@@ -13,7 +12,7 @@ from strikepoint.imaging import StrikeDetectionEngine
 from strikepoint.dash.events import DashEventQueueManager
 from strikepoint.dash.content import ContentManager
 from strikepoint.dash.calibrate import CalibrationDashUi
-from strikepoint.logger import get_logger
+from strikepoint.logger import _getLogger
 
 
 class StrikePointDashApp:
@@ -39,17 +38,17 @@ class StrikePointDashApp:
         self.driverThread.start()
 
         self.eventQueueManager.registerEvent(
-            'add-card', self._addCardHandler,
-            [("cards-div", "children")])
+            'add-history-card', self._addHistoryCardHandler,
+            [("history-div", "children")])
         self.eventQueueManager.registerEvent(
             'update-calibration', self._updateCalibrationHandler, [])
         self.eventQueueManager.registerEvent(
             'update-calibration-status', self._updateCalibrationStatusHandler,
-            [("calibration-status-badge", "children"),
-             ("calibration-status-badge", "color")], needsEventData=False)
+            [("calibrate-btn", "children"),
+             ("calibrate-btn", "color")], needsEventData=False)
 
         @self.app.callback(
-            Input("session-store", "data"),
+            Input("strikepoint-session-store", "data"),
             prevent_initial_call=False
         )
         def detect_reload(data):
@@ -78,76 +77,129 @@ class StrikePointDashApp:
             except Exception as ex:
                 return "Start Recording"
 
+        @self.app.callback(
+            Output("page-content", "children"),
+            Input("strikepoint-url", "pathname")
+        )
+        def render_page(pathname):
+            if pathname == "/":
+                return self.strikeDiv
+            if pathname == "/logs":
+                return self.loggingDiv
+            if pathname == "/history":
+                return self.historyDiv
+            return html.H3("404 Page Not Found")
+
         videoSrcVisual = \
             self.contentManager.getVideoFrameEndpoint('visual')
         videoSrcThermal = \
             self.contentManager.getVideoFrameEndpoint('thermal')
 
-        self.app.layout = html.Div([
-            *self.eventQueueManager.finalElements(),
-            dcc.Store(id="session-store", storage_type="session"),
-            self.calibrationUi.modal,
-            dbc.NavbarSimple([
-                dbc.NavItem(
-                    dbc.Badge("Not Calibrated", color="warning", className="me-1",
-                              id="calibration-status-badge",
-                              style={"marginTop": "4px", "marginBottom": "4px"}),
-                    id="navbar-calibration-status",
-                    style={"verticalAlign": "middle",
-                           "horizontalAlign": "middle"}
+        self.navbar = dbc.Navbar(
+            dbc.Container([
+                html.Div(
+                    html.A(
+                        dbc.Row([
+                            dbc.Col(html.Img(
+                                src="https://placehold.co/100x100", height="30px")),
+                            dbc.Col(dbc.NavbarBrand(
+                                "Strikepoint", className="ms-2")),
+                        ],
+                            align="center",
+                            className="g-0",
+                        ),
+                        href="https://placehold.co/",
+                        style={"textDecoration": "none"},
+                    ),
+                    style={"marginLeft": "8px"},
+                ),
+                html.Div(
+                    dbc.Row([
+                        dbc.Col(
+                            dbc.Nav([
+                                dbc.NavLink(
+                                    "Strike", href="/", className="px-3"),
+                                dbc.NavLink(
+                                    "History", href="/history", className="px-3"),
+                                dbc.NavLink(
+                                    "Logs", href="/logs", className="px-3"),
+                            ])
+                        ),
+                        dbc.Col(
+                            dbc.Button(
+                                "Not Calibrated", color="warning", size="sm",
+                                style={"width": "120px",
+                                       "marginTop": "8px",
+                                       "marginBottom": "8px",
+                                       "marginRight": "8px"},
+                                id="calibrate-btn",
+                            ),
+                        ),
+                    ],
+                        align="center",
+                    ),
+                    className="ms-auto"
                 ),
             ],
-                brand="StrikePoint",
-                brand_href="#",
-                color="primary",
-                dark=True,
-                fixed="top",
-                style={"zIndex": "1030"},
-            ),
+                fluid=True,
+                className="d-flex px-0 align-items-center",
+            )
+        )
+
+        self.loggingDiv = html.Div([
             html.Div([
-                html.Div([
-                    html.H4("Live Feed",
-                            style={"color": "white", "textAlign": "center"}),
-                    html.Hr(),
-                    html.Img(id="visualLive", src=videoSrcVisual,
-                                style={"width": "100%", "objectFit": "cover"}),
-                    html.Img(id="thermalLive", src=videoSrcThermal,
-                                style={"width": "100%", "objectFit": "cover"}),
-                    dbc.Button("Start Recording", id="start-rec-btn",
-                               color="primary", style={"width": "100%"}),
-                    dbc.Button("Recalibrate", id="calibrate-btn",
-                               color="primary", style={"width": "100%"}),
-                ], style={
-                    "position": "fixed",
-                    "left": "0",
-                    "top": "56px",
-                    "width": "20%",
-                    "height": "calc(100vh - 56px)",
-                    "padding": "16px",
-                    "backgroundColor": "#0b1b2b",
-                    "overflow": "auto",
-                    "boxSizing": "border-box"
-                }),
-                html.Div([
-                    html.Div(id="cards-div", style={"padding": "8px"}),
-                ], style={
-                    "marginLeft": "20%",
-                    "width": "80%",
-                    "marginTop": "56px",
-                    "height": "calc(100vh - 56px)",
-                    "overflowY": "auto",
-                    "padding": "16px",
-                    "boxSizing": "border-box",
-                })
-            ], style={"position": "relative", "height": "100vh"}),
-        ], style={"height": "100vh", "backgroundColor": "#0f1724"})
+                html.H4("Live Feed",
+                        style={"color": "white", "textAlign": "center"}),
+                html.Hr(),
+                html.Img(id="visualLive", src=videoSrcVisual,
+                            style={"width": "100%", "objectFit": "cover"}),
+                html.Img(id="thermalLive", src=videoSrcThermal,
+                            style={"width": "100%", "objectFit": "cover"}),
+                dbc.Button("Start Recording", id="start-rec-btn",
+                           color="primary", style={"width": "100%"}),
+            ], style={
+                "width": "20%",
+                "padding": "16px",
+                "overflow": "auto",
+                "boxSizing": "border-box"
+            }),
+            html.Div([
+                html.Div(id="logs-div", style={"padding": "8px"}),
+            ], style={
+                "marginLeft": "20%",
+                "width": "80%",
+                "marginTop": "56px",
+                "height": "calc(100vh - 56px)",
+                "overflowY": "auto",
+                "padding": "16px",
+                "boxSizing": "border-box",
+            })
+        ],
+            style={"position": "relative", "height": "100vh"}
+        ),
 
-    def _addCardHandler(self, cards_div_children, eventData: list):
+        self.historyDiv = html.Div(id="history-div", style={"padding": "8px"})
+        self.strikeDiv = html.Div(id="strike-div", style={"padding": "8px"})
+
+        self.app.layout = html.Div([
+            *self.eventQueueManager.finalElements(),
+            dcc.Store(id="strikepoint-session-store", storage_type="session"),
+            dcc.Location(id='strikepoint-url', refresh=False),
+            self.calibrationUi.modal,
+            self.navbar,
+            html.Div(self.loggingDiv,
+                     id="page-content",
+                     style={"position": "relative", "height": "100vh"}),
+        ],
+            style={"height": "100vh", "backgroundColor": "#0f1724"}
+        )
+
+    def _addHistoryCardHandler(self, history_div_children, eventData: list):
         for card in eventData:
-            cards_div_children = cards_div_children or []
-            cards_div_children = [card] + cards_div_children
+            history_div_children = history_div_children or []
+            history_div_children = [card] + history_div_children
 
-        return cards_div_children
+        return history_div_children
 
     def _updateCalibrationStatusHandler(self,
                                         calibration_status_children,
@@ -155,10 +207,10 @@ class StrikePointDashApp:
         calibration_status_children = "Not Calibrated"
         calibration_status_color = "warning"
         if self.thermalVisualTransform is not None:
-            calibration_status_children = "Ready"
+            calibration_status_children = "Calibrated"
             calibration_status_color = "success"
         return calibration_status_children, calibration_status_color
-    
+
     def _updateCalibrationHandler(self, eventData: list):
         self.thermalVisualTransform = eventData[-1]
         self.database.saveTransform(self.thermalVisualTransform)
@@ -166,7 +218,7 @@ class StrikePointDashApp:
         card = dbc.Card([
             dbc.Alert("Calibration Complete", color='success'),
         ], style={"marginBottom": "4px"})
-        self.eventQueueManager.fireEvent('add-card', card)
+        self.eventQueueManager.fireEvent('add-history-card', card)
         self.eventQueueManager.fireEvent('update-calibration-status')
 
     def _threadMain(self):
@@ -202,10 +254,11 @@ class StrikePointDashApp:
                             dbc.Alert(headerText, color=color),
                             dbc.CardBody(html.Img(src=contentPath)),
                         ], style={"marginBottom": "4px"})
-                        self.eventQueueManager.fireEvent('add-card', card)
+                        self.eventQueueManager.fireEvent(
+                            'add-history-card', card)
 
             except Exception as ex:
-                get_logger().error(
+                _getLogger().error(
                     f"StrikePointDashApp thread exception: {ex}")
 
     def run(self, host="0.0.0.0", port=8050, debug=False, threaded=True):

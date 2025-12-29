@@ -135,7 +135,8 @@ class CalibrationEngine1Ball:
             return self.phaseResultMap[self.phase]
 
     def _processFinalize(self, frameSeq: int, frameInfo: dict):
-        if self._processPoint(frameSeq, frameInfo) is not None:
+        rtn = self._processPoint(frameSeq, frameInfo)
+        if rtn is not None:
             visMatrix = np.float32(
                 [r['visPoint'] for r in self.phaseResultMap.values()])
             thermMatrix = np.float32(
@@ -146,67 +147,27 @@ class CalibrationEngine1Ball:
             Hv, Wv = thermFrame.shape[:2]
             thermDemo = thermFrame * 0
             for r in self.phaseResultMap.values():
-                cv2.circle(thermDemo, r['thermPoint'], 3 *
-                        r['thermR'], (255, 255, 0), 1)
-            thermWarped = cv2.warpAffine(
+                cv2.circle(
+                    thermDemo, r['thermPoint'], 3 * r['thermR'], (255, 0, 0), 4)
+                cv2.circle(
+                    thermDemo, r['thermPoint'], 3, (0, 0, 255), 1)
+            thermFinal = cv2.warpAffine(
                 thermDemo, transformMatrix, (Wv, Hv),
                 flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
                 borderValue=0)
 
+            visFinal = cv2.addWeighted(self.phaseResultMap[1]['visDemo'], 0.5,
+                                       self.phaseResultMap[2]['visDemo'], 0.5, 0)
+            visFinal = cv2.addWeighted(visFinal, 0.5,
+                                       self.phaseResultMap[3]['visDemo'], 0.5, 0)
+            visFinal = cv2.addWeighted(visFinal, 0.8, thermFinal, 0.2, 0)
+
             return {
-                'phaseCompleted': self.phase,
-                'visDemo': thermWarped,
-                'thermDemo': thermDemo,
+                **rtn,
+                'visFinal': visFinal,
+                'thermFinal': thermDemo,
                 'transformMatrix': transformMatrix,
             }
-
-
-class CalibrationEngine3Balls:
-    """Engine to perform calibration between thermal and visual frames.
-    """
-
-    def __init__(self):
-        self.calibCount = 4
-        self.calibMatrixList = list()
-        self.lastCalibFrame = 9999
-
-    def calibrateFrames(self, frameSeq: int, frameInfo: dict):
-        visFrame = frameInfo.rgbFrames['visual']
-        thermFrame = frameInfo.rgbFrames['thermal']
-
-        visCircles = findBrightestCircles(visFrame, 3, throwOnFail=False)
-        thermCircles = findBrightestCircles(thermFrame, 3, throwOnFail=False)
-        if (len(visCircles) < 3) or (len(thermCircles) < 3):
-            return None
-
-        visMatrix = np.float32([c[:2] for c in sorted(visCircles[:3])])
-        thermMatrix = np.float32(
-            [c[:2] for c in sorted(thermCircles[:3])])
-        M = cv2.getAffineTransform(thermMatrix, visMatrix)
-
-        if frameSeq != self.lastCalibFrame + 1:
-            self.calibMatrixList.clear()
-        self.lastCalibFrame = frameSeq
-        self.calibMatrixList.append(M)
-        if len(self.calibMatrixList) == self.calibCount:
-            M = sum(self.calibMatrixList) / len(self.calibMatrixList)
-            visDemo = drawBrightestCircles(
-                visFrame, visCircles, targetCount=3)
-            thermDemo = drawBrightestCircles(
-                thermFrame, thermCircles, targetCount=3)
-            Hv, Wv = visDemo.shape[:2]
-            thermWarped = cv2.warpAffine(
-                thermDemo, M, (Wv, Hv), flags=cv2.INTER_LINEAR,
-                borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-            final = cv2.addWeighted(visDemo, 0.5, thermWarped, 0.5, 0)
-            self.calibMatrixList.clear()
-            return {
-                'final': final,
-                'image': np.hstack((visDemo, thermDemo, final)),
-                'transform': M,
-            }
-
-        return None
 
 
 class StrikeDetectionEngine:
