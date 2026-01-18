@@ -1,15 +1,16 @@
 import cv2
+import argparse
 
-from logging import getLogger
-from picamera2 import Picamera2
-from os import environ
-
+from strikepoint.logging import setupLogging
 from strikepoint.dash.app import StrikePointDashApp
 from strikepoint.producer import FrameProducer, FrameProvider
 from strikepoint.driver import LeptonDriver
-from strikepoint.logger import logger
 from strikepoint.producer import \
     FrameProducer, FileBasedDriver, FileBasedFrameProvider
+
+from logging import getLogger
+from os import environ
+from queue import Queue
 
 
 class PicameraFrameProvider(FrameProvider):
@@ -41,7 +42,7 @@ class LeptonFrameProvider(FrameProvider):
         frame = self.leptonDriver.getFrame()
         while (entry := self.leptonDriver.getNextLogEntry()) is not None:
             level, msg = entry
-            logger.log(level, f"Lepton: {msg}")
+            logger.log(level, f"(liblepton) {msg}")
 
         frame = cv2.flip(frame, 0)
         frame = cv2.flip(frame, 1)
@@ -49,15 +50,35 @@ class LeptonFrameProvider(FrameProvider):
 
 
 if __name__ == "__main__":
-    # fileDriver = FileBasedDriver('dev/data/demo-1ball-calibrate3.bin', timestampScale=0.2)
-    # thermalFrameProvider = FileBasedFrameProvider('thermal', fileDriver, flipImage=True)
-    # visualFrameProvider = FileBasedFrameProvider('visual', fileDriver)
-    getLogger('werkzeug').setLevel('ERROR')
-    getLogger('picamera2').setLevel('ERROR')
+    parser = argparse.ArgumentParser(
+        prog="main-rpi.py", description="StrikePoint runner")
+    parser.add_argument(
+        "-i", "--input-recording", type=str,
+        help="use a file-based recording instead of live camera inputs")
+    args = parser.parse_args()
+
+    msgQueue = Queue()
+    setupLogging(msgQueue=msgQueue)
+    logger = getLogger("strikepoint")
+    logger.info("Starting main-rpi.py")
+
+    getLogger('werkzeug').setLevel('WARNING')
+    getLogger('picamera2').setLevel('WARNING')
+    getLogger('asyncio').setLevel('WARNING')
     environ["LIBCAMERA_LOG_LEVELS"] = "*:ERROR"
 
-    thermalFrameProvider = LeptonFrameProvider()
-    visualFrameProvider = PicameraFrameProvider()
+    if args.input_recording:
+        logger.info(f"Using recording file: {args.input_recording}")
+        fileDriver = FileBasedDriver(args.input_recording, timestampScale=1.0)
+        thermalFrameProvider = \
+            FileBasedFrameProvider('thermal', fileDriver, flipImage=True)
+        visualFrameProvider = \
+            FileBasedFrameProvider('visual', fileDriver)
+    else:
+        from picamera2 import Picamera2
+        thermalFrameProvider = LeptonFrameProvider()
+        visualFrameProvider = PicameraFrameProvider()
+
     producer = FrameProducer(thermalFrameProvider, visualFrameProvider)
-    app_instance = StrikePointDashApp(producer)
+    app_instance = StrikePointDashApp(producer, msgQueue)
     app_instance.run()

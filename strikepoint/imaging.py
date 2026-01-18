@@ -4,18 +4,16 @@ import numpy as np
 from enum import IntEnum
 from collections import defaultdict
 
+RED, GREEN, BLUE = (0, 0, 255), (0, 255, 0), (255, 0, 0)
 
-def findBrightestCircles(frame, targetCount, *,
-                         factor: float = 1.5,
-                         throwOnFail: bool = True):
+
+def findBrightestVisualCircles(frame):
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     frame = cv2.medianBlur(frame, 5)
     circles = cv2.HoughCircles(
         frame, cv2.HOUGH_GRADIENT_ALT, dp=1.2, minDist=30, param1=100,
         param2=0.8, minRadius=10, maxRadius=50)
     if circles is None:
-        if throwOnFail:
-            raise RuntimeError("No circles found")
         return list()
 
     overallMeanVal = cv2.mean(frame)[0]
@@ -25,26 +23,34 @@ def findBrightestCircles(frame, targetCount, *,
         mask = np.zeros(frame.shape, dtype=np.uint8)
         cv2.circle(mask, (x, y), r, 255, -1)
         meanVal = cv2.mean(frame, mask=mask)[0]
-        if meanVal > overallMeanVal*factor:
+        if meanVal > overallMeanVal*1.5:
             intensityCircleList.append((meanVal, (x, y, r)))
-
-    if throwOnFail and (len(intensityCircleList) < targetCount):
-        raise RuntimeError("Not enough target circles found")
 
     intensityCircleList.sort(key=lambda t: t[0], reverse=True)
     return list(a[1] for a in intensityCircleList)
 
 
-def drawBrightestCircles(frame, circles: list, *, targetCount: int = None):
-    targetCount = targetCount or len(circles)
-    circles.sort(key=lambda t: t[0], reverse=True)
-    for x, y, r in circles[:targetCount]:
-        cv2.circle(frame, (x, y), r, (0, 255, 0), 2)
-        cv2.circle(frame, (x, y), 2, (0, 0, 255), 3)
-    for x, y, r in circles[targetCount:]:
-        cv2.circle(frame, (x, y), r, (255, 128, 128), 1)
-        cv2.circle(frame, (x, y), 2, (0, 0, 255), 3)
-    return frame
+def findBrightestThermalCircles(frame):
+    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    frame = cv2.GaussianBlur(frame, (5, 5), sigmaX=1.5)
+    circles = cv2.HoughCircles(
+        frame, cv2.HOUGH_GRADIENT, dp=1.0, minDist=30, param1=40,
+        param2=10, minRadius=10, maxRadius=50)
+    if circles is None:
+        return list()
+
+    overallMeanVal = cv2.mean(frame)[0]
+    intensityCircleList = list()
+    circles = np.round(circles[0]).astype(int)
+    for (x, y, r) in circles:
+        mask = np.zeros(frame.shape, dtype=np.uint8)
+        cv2.circle(mask, (x, y), r, 255, -1)
+        meanVal = cv2.mean(frame, mask=mask)[0]
+        if meanVal > overallMeanVal*1.5:
+            intensityCircleList.append((meanVal, (x, y, r)))
+
+    intensityCircleList.sort(key=lambda t: t[0], reverse=True)
+    return list(a[1] for a in intensityCircleList)
 
 
 class CalibrationEngine1Ball:
@@ -85,89 +91,103 @@ class CalibrationEngine1Ball:
 
     def process(self, frameSeq: int, frameInfo: dict):
         result = self.processHandlerMap[self.phase](frameSeq, frameInfo)
-        if result is not None:
+        if result is not None and 'phaseCompleted' in result:
             self.phase = CalibrationEngine1Ball.CalibrationPhase(
                 self.phase + 1)
         return result
 
     def _processInactive(self, frameSeq: int, frameInfo: dict):
-        return None
+        return dict()
 
     def _processPoint(self, frameSeq: int, frameInfo: dict):
-        visFrame = frameInfo.rgbFrames['visual']
-        thermFrame = frameInfo.rgbFrames['thermal']
-        visCircles = findBrightestCircles(visFrame, 1, throwOnFail=False)
-        thermCircles = findBrightestCircles(thermFrame, 1, throwOnFail=False)
-        if (len(visCircles) != 1) or (len(thermCircles) != 1):
-            return None
+        visFrame = frameInfo.rgbFrames['visual'].copy()
+        thermFrame = frameInfo.rgbFrames['thermal'].copy()
+        rtn = dict(visFrame=visFrame, thermFrame=thermFrame)
+        radius = 3
+
+        for r in self.phaseResultMap.values():
+            cv2.circle(
+                rtn['visFrame'], r['visPoint'], radius*r['visR'], BLUE, 1)
+
+        visCircles = findBrightestVisualCircles(visFrame)
+        if len(visCircles) > 0:
+            visCircle, visR = np.array(visCircles[0][:2]), visCircles[0][2]
+            cv2.circle(rtn['visFrame'], visCircle, visR, GREEN, 2)
+            cv2.circle(rtn['visFrame'], visCircle, 2, RED, 3)
+
+        thermCircles = findBrightestThermalCircles(thermFrame)
+        if len(thermCircles) > 0:
+            thermCircle, thermR = np.array(
+                thermCircles[0][:2]), thermCircles[0][2]
+            cv2.circle(rtn['thermFrame'], thermCircle, thermR, GREEN, 2)
+            cv2.circle(rtn['thermFrame'], thermCircle, 2, RED, 3)
 
         if frameSeq != self.lastCalibFrame + 1:
             self.runningPointList.clear()
         self.lastCalibFrame = frameSeq
 
-        visCircle, visR = np.array(visCircles[0][:2]), visCircles[0][2]
-        thermCircle, thermR = np.array(thermCircles[0][:2]), thermCircles[0][2]
+        if (len(visCircles) != 1) or (len(thermCircles) != 1):
+            return rtn
+
         for r in self.phaseResultMap.values():
-            if np.linalg.norm(visCircle - r['visPoint']) < 3*r['visR']:
-                return None
+            if np.linalg.norm(visCircle - r['visPoint']) < radius*r['visR']:
+                cv2.circle(rtn['visFrame'], visCircle, radius*visR, RED, 2)
+                return rtn
 
         self.runningPointList.append((visCircle, thermCircle))
         if len(self.runningPointList) == 7:
-            cv2.circle(visFrame, visCircle, 3*visR, (0, 255, 0), 2)
-            cv2.circle(visFrame, visCircle, 2, (0, 0, 255), 3)
-            cv2.circle(thermFrame, thermCircle, 3*thermR, (0, 255, 0), 2)
-            cv2.circle(thermFrame, thermCircle, 2, (0, 0, 255), 3)
             visFinalP = sum(a[0] for a in self.runningPointList[-5:]) / 5.0
             visFinalP = (int(visFinalP[0]), int(visFinalP[1]))
             thermFinalP = sum(a[1] for a in self.runningPointList[-5:]) / 5.0
             thermFinalP = (int(thermFinalP[0]), int(thermFinalP[1]))
+            rtn['phaseCompleted'] = self.phase
+            rtn['visDemo'] = visFrame
+            rtn['visPoint'] = visFinalP
+            rtn['visR'] = visR
+            rtn['thermDemo'] = thermFrame
+            rtn['thermPoint'] = thermFinalP
+            rtn['thermR'] = thermR
             self.runningPointList.clear()
-            self.phaseResultMap[self.phase] = {
-                'phaseCompleted': self.phase,
-                'visDemo': visFrame,
-                'visPoint': visFinalP,
-                'visR': visR,
-                'thermDemo': thermFrame,
-                'thermPoint': thermFinalP,
-                'thermR': thermR,
-            }
+            self.phaseResultMap[self.phase] = rtn
 
-            return self.phaseResultMap[self.phase]
+        return rtn
 
     def _processFinalize(self, frameSeq: int, frameInfo: dict):
         rtn = self._processPoint(frameSeq, frameInfo)
-        if rtn is not None:
-            visMatrix = np.float32(
-                [r['visPoint'] for r in self.phaseResultMap.values()])
-            thermMatrix = np.float32(
-                [r['thermPoint'] for r in self.phaseResultMap.values()])
-            transformMatrix = cv2.getAffineTransform(thermMatrix, visMatrix)
+        if 'phaseCompleted' not in rtn:
+            return rtn
 
-            thermFrame = frameInfo.rgbFrames['thermal']
-            Hv, Wv = thermFrame.shape[:2]
-            thermDemo = thermFrame * 0
-            for r in self.phaseResultMap.values():
-                cv2.circle(
-                    thermDemo, r['thermPoint'], 3 * r['thermR'], (255, 0, 0), 4)
-                cv2.circle(
-                    thermDemo, r['thermPoint'], 3, (0, 0, 255), 1)
-            thermFinal = cv2.warpAffine(
-                thermDemo, transformMatrix, (Wv, Hv),
-                flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
-                borderValue=0)
+        visMatrix = np.float32(
+            [r['visPoint'] for r in self.phaseResultMap.values()])
+        thermMatrix = np.float32(
+            [r['thermPoint'] for r in self.phaseResultMap.values()])
+        transformMatrix = cv2.getAffineTransform(thermMatrix, visMatrix)
 
-            visFinal = cv2.addWeighted(self.phaseResultMap[1]['visDemo'], 0.5,
-                                       self.phaseResultMap[2]['visDemo'], 0.5, 0)
-            visFinal = cv2.addWeighted(visFinal, 0.5,
-                                       self.phaseResultMap[3]['visDemo'], 0.5, 0)
-            visFinal = cv2.addWeighted(visFinal, 0.8, thermFinal, 0.2, 0)
+        thermFrame = frameInfo.rgbFrames['thermal']
+        Hv, Wv = thermFrame.shape[:2]
+        thermDemo = thermFrame * 0
+        for r in self.phaseResultMap.values():
+            cv2.circle(
+                thermDemo, r['thermPoint'], 3 * r['thermR'], BLUE, 4)
+            cv2.circle(
+                thermDemo, r['thermPoint'], 3, RED, 1)
+        thermFinal = cv2.warpAffine(
+            thermDemo, transformMatrix, (Wv, Hv),
+            flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
+            borderValue=0)
 
-            return {
-                **rtn,
-                'visFinal': visFinal,
-                'thermFinal': thermDemo,
-                'transformMatrix': transformMatrix,
-            }
+        visFinal = cv2.addWeighted(self.phaseResultMap[1]['visDemo'], 0.5,
+                                   self.phaseResultMap[2]['visDemo'], 0.5, 0)
+        visFinal = cv2.addWeighted(visFinal, 0.5,
+                                   self.phaseResultMap[3]['visDemo'], 0.5, 0)
+        visFinal = cv2.addWeighted(visFinal, 0.8, thermFinal, 0.2, 0)
+
+        return {
+            **rtn,
+            'visFinal': visFinal,
+            'thermFinal': thermDemo,
+            'transformMatrix': transformMatrix,
+        }
 
 
 class StrikeDetectionEngine:
@@ -184,7 +204,7 @@ class StrikeDetectionEngine:
     def detectStrike(self, frameInfo: dict, thermalVisualTransform: np.ndarray):
         visFrame = frameInfo.rgbFrames['visual']
         Hv, Wv = visFrame.shape[:2]
-        visCircles = findBrightestCircles(visFrame, 1, throwOnFail=False)
+        visCircles = findBrightestVisualCircles(visFrame)
         foundSingleCircle = len(visCircles) == 1
         visCircle = visCircles[0] if foundSingleCircle else None
         self.foundBallObservedSeq.append(
@@ -255,8 +275,8 @@ class StrikeDetectionEngine:
         rightScore = rightDiff.sum() / diffGrayW.sum()
 
         cv2.circle(
-            thermalDiffW, (int(c[0]), int(c[1])), c[2], (0, 255, 0), 2)
-        cv2.circle(final, (int(c[0]), int(c[1])), c[2], (0, 255, 0), 2)
+            thermalDiffW, (int(c[0]), int(c[1])), c[2], GREEN, 2)
+        cv2.circle(final, (int(c[0]), int(c[1])), c[2], GREEN, 2)
         return {
             'final': final,
             'thermalDiffW': thermalDiffW,

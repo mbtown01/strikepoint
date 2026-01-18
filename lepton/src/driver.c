@@ -159,7 +159,7 @@ int LEPDRV_Init(LEPDRV_SessionHandle *hndlPtr,
             session->logFile = newLogFile;
     }
 
-    #ifndef DEBUG
+    #ifdef DEBUG
     LOG_INFO("Lepton driver v%d.%d DEBUG initializing...",
              LEPDRV_VERSION_MAJOR, LEPDRV_VERSION_MINOR);
     #else

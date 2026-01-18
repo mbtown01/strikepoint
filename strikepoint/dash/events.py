@@ -54,7 +54,7 @@ class DashEventQueueManager:
             *list(State(a, b) for a, b in outputList),
         )(self._callbackDecorator(name, handler, needsEventData))
 
-    def finalElements(self):
+    def getFinalElements(self):
         """ Finalizes the event queue manager by setting up the necessary
         callbacks. This method should be called after all events have been 
         registered.

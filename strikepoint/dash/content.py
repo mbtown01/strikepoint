@@ -4,16 +4,16 @@ import cv2
 from flask import Response
 from dash import Dash
 from threading import Condition
+from collections import defaultdict
 
 
 class ContentManager:
 
     def __init__(self, app: Dash):
-        self.frameInfoCondition = Condition()
-        self.imageFrameMap = dict()
-        self.videoFrameMap = dict()
-        self.imageSeq = 0
-        self.videoFrameSeq = 0
+        self._frameInfoConditionMap = defaultdict(Condition)
+        self._encodedImageMap = dict()
+        self._videoFrameMap = dict()
+        self._imageSeq = 0
 
         @app.server.route("/content/video/<path:subpath>.mjpg", methods=["GET"])
         def serve_video_frames(subpath):
@@ -22,47 +22,36 @@ class ContentManager:
 
         @app.server.route("/content/image/<path:subpath>.jpg", methods=["GET"])
         def serve_images(subpath):
-            return Response(self._encodeImageAsJpeg(self.imageFrameMap[subpath]),
-                            mimetype="image/jpeg")
+            return Response(self._encodedImageMap[subpath], mimetype="image/jpeg")
 
     def _rgbFrameGenerator(self, name: str):
-        lastSeenVideoFrameSeq = 0
         while True:
-            with self.frameInfoCondition:
-                while (name not in self.videoFrameMap or
-                       lastSeenVideoFrameSeq == self.videoFrameSeq):
-                    self.frameInfoCondition.wait()
-            lastSeenVideoFrameSeq = self.videoFrameSeq
-            yield self._encodeFrameAsJpeg(self.videoFrameMap[name])
-
-    def _encodeFrameAsJpeg(self, frame: np.ndarray) -> bytes:
-        encoded = self._encodeImageAsJpeg(frame)
-        return b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + \
-            encoded + b"\r\n"
+            with self._frameInfoConditionMap[name]:
+                self._frameInfoConditionMap[name].wait()
+            encoded = self._encodeImageAsJpeg(self._videoFrameMap[name])
+            yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + \
+                encoded + b"\r\n"
 
     def _encodeImageAsJpeg(self, frame: np.ndarray) -> bytes:
         ok, encoded = cv2.imencode(".jpg", frame)
         if not ok:
             raise RuntimeError("Failed to encode frame")
         return encoded.tobytes()
-    
-    def releaseAllFrames(self):
-        self.videoFrameSeq += 1
-        with self.frameInfoCondition:
-            self.frameInfoCondition.notify_all()
 
     def getVideoFrameEndpoint(self, name: str) -> str:
         return f"/content/video/{name}.mjpg"
-    
+
     def getImageEndpoint(self, name: str) -> str:
         return f"/content/image/{name}.jpg"
 
     def registerVideoFrame(self, name: str, content: np.array):
-        self.videoFrameMap[name] = content
+        self._videoFrameMap[name] = content
+        with self._frameInfoConditionMap[name]:
+            self._frameInfoConditionMap[name].notify_all()
         return self.getVideoFrameEndpoint(name)
 
     def registerImage(self, name: str, content: np.array):
-        contentName = f"{name}_{self.imageSeq:08d}"
-        self.imageSeq += 1
-        self.imageFrameMap[contentName] = content
+        contentName = f"{name}_{self._imageSeq:08d}"
+        self._imageSeq += 1
+        self._encodedImageMap[contentName] = self._encodeImageAsJpeg(content)
         return self.getImageEndpoint(contentName)

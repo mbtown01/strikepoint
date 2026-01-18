@@ -5,19 +5,23 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Web app (laptop)",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "main-laptop.py",
-            "console": "internalConsole",
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "name": "Web app (raspberry pi)",
+            "name": "Web app (live)",
             "type": "debugpy",
             "request": "launch",
             "program": "main-rpi.py",
             "console": "internalConsole",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Web app (testing)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "main-rpi.py",
+            "console": "internalConsole",
+            "args": [
+                "--input-recording",
+                "dev/data/strikes.bin"
+            ],
             "cwd": "${workspaceFolder}"
         },
         {

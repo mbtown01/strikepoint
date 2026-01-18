@@ -53,7 +53,6 @@ class CalibrationDashUi:
         modalGridDivStyle = {
             'width': '100%',
             'height': '100%',
-            # 'backgroundColor': 'black',
             'color': 'white',
             'display': 'grid',
             'placeItems': 'center',
@@ -134,7 +133,16 @@ class CalibrationDashUi:
 
     def process(self, frameSeq: int, frameInfo: FrameInfo):
         result = self.calibrationEngine.process(frameSeq, frameInfo)
-        if result is not None:
+        visFrame = result.get('visFrame')
+        if visFrame is not None:
+            self.contentManager.registerVideoFrame(
+                'cal-vis-frame', visFrame)
+        thermFrame = result.get('thermFrame')
+        if thermFrame is not None:
+            self.contentManager.registerVideoFrame(
+                'cal-therm-frame', thermFrame)
+
+        if 'phaseCompleted' in result:
             self.eventQueueManager.fireEvent('cal-update-dialog', result)
             self.lastTransformMatrix = result.get('transformMatrix')
 
@@ -147,12 +155,11 @@ class CalibrationDashUi:
                              row1col1, row1col2, row1col3, row1col4,
                              row2col1, row2col2, row2col3, row2col4,
                              acceptDisabled, eventData):
-        videoSrcVisual = \
-            self.contentManager.getVideoFrameEndpoint('visual')
-        videoSrcThermal = \
-            self.contentManager.getVideoFrameEndpoint('thermal')
+        if not eventData or len(eventData) == 0:
+            return (row1col1, row1col2, row1col3, row1col4,
+                    row2col1, row2col2, row2col3, row2col4, acceptDisabled)
         result = eventData[-1] or dict()
-
+        
         phaseCompleted = result.get(
             'phaseCompleted', CalibrationEngine1Ball.CalibrationPhase.INACTIVE)
         if phaseCompleted > CalibrationEngine1Ball.CalibrationPhase.INACTIVE:
@@ -160,6 +167,11 @@ class CalibrationDashUi:
                 'cal-vis-demo', result['visDemo'])
             calibratedThermDemo = self.contentManager.registerImage(
                 'cal-therm-demo', result['thermDemo'])
+            
+        videoSrcVisual = \
+            self.contentManager.getVideoFrameEndpoint('cal-vis-frame')
+        videoSrcThermal = \
+            self.contentManager.getVideoFrameEndpoint('cal-therm-frame')
 
         acceptDisabled = True
         if phaseCompleted == CalibrationEngine1Ball.CalibrationPhase.INACTIVE:

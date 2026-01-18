@@ -1,15 +1,18 @@
 cmake_minimum_required(VERSION 3.14)
-project(strikepoint C CXX)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set(CMAKE_BUILD_TYPE Debug CACHE STRING "" FORCE)
-set(CMAKE_C_FLAGS_DEBUG "-g -O0 -fno-omit-frame-pointer")
+set(CMAKE_C_FLAGS_DEBUG "-g -O0 -fno-omit-frame-pointer -DDEBUG=1")
+set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -fno-omit-frame-pointer -DDEBUG=1")
+set(CMAKE_C_FLAGS_RELEASE "-O3 -DNDEBUG=1")
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG=1")
 set(CMAKE_EXE_LINKER_FLAGS_DEBUG "-g")
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+project(strikepoint C CXX)
 
 # Common include dir for the C driver headers
 set(LEPTON_DIR ${CMAKE_SOURCE_DIR})

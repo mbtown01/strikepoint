@@ -1,23 +1,35 @@
 import dash_bootstrap_components as dbc
+import pandas as pd
+import plotly.express as px
 
-from flask import Response
 from dash import Dash, html, dcc, no_update
 from dash.dependencies import Input, Output, State
 from threading import Lock, Thread, Condition
+from queue import Queue
+from logging import getLogger
 
 from strikepoint.database import Database
 from strikepoint.producer import FrameProducer
-from strikepoint.frames import FrameInfoWriter
+from strikepoint.frames import FrameInfoWriter, FrameInfo
 from strikepoint.imaging import StrikeDetectionEngine
 from strikepoint.dash.events import DashEventQueueManager
 from strikepoint.dash.content import ContentManager
 from strikepoint.dash.calibrate import CalibrationDashUi
-from strikepoint.logger import _getLogger
+
+logger = getLogger("strikepoint")
 
 
 class StrikePointDashApp:
 
-    def __init__(self, producer: FrameProducer):
+    LEVEL_NAME_COLOR_MAP = {
+        'DEBUG': 'lightgray',
+        'INFO': 'white',
+        'WARNING': 'yellow',
+        'ERROR': 'red',
+        'CRITICAL': 'darkred',
+    }
+
+    def __init__(self, producer: FrameProducer, msgQueue: Queue):
         self.app = Dash(__name__, title='StrikePoint', serve_locally=True)
         self.producer = producer
         self.contentManager = ContentManager(self.app)
@@ -28,14 +40,16 @@ class StrikePointDashApp:
         self.frameWriter = None
         self.frameWriterLock = Lock()
         self.thermalVisualTransform = self.database.loadLatestTransform()
+        self.strikeMetricsDf = pd.DataFrame(
+            columns=["time", "tempAvg", "tempDelta"])
+        self.logMessages = []
+        self.msgQueue = msgQueue
         self.calibrationUi = CalibrationDashUi(
             app=self.app,
             db=self.database,
             contentManager=self.contentManager,
             eventQueueManager=self.eventQueueManager,
         )
-
-        self.driverThread.start()
 
         self.eventQueueManager.registerEvent(
             'add-history-card', self._addHistoryCardHandler,
@@ -46,6 +60,15 @@ class StrikePointDashApp:
             'update-calibration-status', self._updateCalibrationStatusHandler,
             [("calibrate-btn", "children"),
              ("calibrate-btn", "color")], needsEventData=False)
+        self.eventQueueManager.registerEvent(
+            'update-log-entries', self._updateLogEntriesHandler,
+            [("log-content-div", "children")])
+        self.eventQueueManager.registerEvent(
+            'update-strike-time-series-graph',
+            self._updateStrikeTimeSeriesGraphHandler,
+            [("strike-time-series-graph", "figure")], needsEventData=False)
+
+        self.driverThread.start()
 
         @self.app.callback(
             Input("strikepoint-session-store", "data"),
@@ -54,6 +77,8 @@ class StrikePointDashApp:
         def detect_reload(data):
             if data is None:
                 self.eventQueueManager.fireEvent('update-calibration-status')
+                self.eventQueueManager.fireEvent(
+                    'update-strike-time-series-graph')
 
         @self.app.callback(Input("calibrate-btn", "n_clicks"),
                            prevent_initial_call=True)
@@ -66,6 +91,7 @@ class StrikePointDashApp:
                            prevent_initial_call=True)
         def on_start_record(_):
             try:
+                logger.debug("Toggling recording state")
                 with self.frameWriterLock:
                     if self.frameWriter is None:
                         self.frameWriter = FrameInfoWriter("recording.bin")
@@ -79,16 +105,17 @@ class StrikePointDashApp:
 
         @self.app.callback(
             Output("page-content", "children"),
-            Input("strikepoint-url", "pathname")
+            Input("strikepoint-url", "pathname"),
         )
         def render_page(pathname):
             if pathname == "/":
                 return self.strikeDiv
-            if pathname == "/logs":
+            elif pathname == "/logs":
                 return self.loggingDiv
-            if pathname == "/history":
+            elif pathname == "/history":
                 return self.historyDiv
-            return html.H3("404 Page Not Found")
+
+            return html.H3("404: Not found", style={"color": "white"})
 
         videoSrcVisual = \
             self.contentManager.getVideoFrameEndpoint('visual')
@@ -146,53 +173,88 @@ class StrikePointDashApp:
             )
         )
 
+        # layout children left-to-right using flex; left column = 20%, right = 80%
         self.loggingDiv = html.Div([
             html.Div([
-                html.H4("Live Feed",
-                        style={"color": "white", "textAlign": "center"}),
+                html.H4("Live Feed", style={
+                        "color": "white", "textAlign": "center", "margin": "0"}),
                 html.Hr(),
-                html.Img(id="visualLive", src=videoSrcVisual,
-                            style={"width": "100%", "objectFit": "cover"}),
-                html.Img(id="thermalLive", src=videoSrcThermal,
-                            style={"width": "100%", "objectFit": "cover"}),
+                html.Img(id="visualLive", src=videoSrcVisual, style={
+                            "width": "100%", "height": "auto", "objectFit": "cover"}),
+                html.Img(id="thermalLive", src=videoSrcThermal, style={
+                            "width": "100%", "height": "auto", "objectFit": "cover"}),
                 dbc.Button("Start Recording", id="start-rec-btn",
                            color="primary", style={"width": "100%"}),
-            ], style={
-                "width": "20%",
-                "padding": "16px",
-                "overflow": "auto",
-                "boxSizing": "border-box"
-            }),
-            html.Div([
-                html.Div(id="logs-div", style={"padding": "8px"}),
-            ], style={
-                "marginLeft": "20%",
-                "width": "80%",
-                "marginTop": "56px",
-                "height": "calc(100vh - 56px)",
-                "overflowY": "auto",
-                "padding": "16px",
-                "boxSizing": "border-box",
-            })
+            ], style={"flex": "0 0 20%",
+                      "maxWidth": "20%",
+                      "height": "100%",
+                      "padding": "16px",
+                      "overflow": "visible",
+                      "boxSizing": "border-box",
+                      }),
+            html.Div(
+                id="log-content-div",
+                style={"flex": "1 1 80%",
+                       "minWidth": "0",
+                       "height": "100%",
+                       "padding": "8px",
+                       "overflowY": "auto",
+                       "boxSizing": "border-box",
+                       "fontFamily": "monospace, 'Courier New', monospace",
+                       "fontSize": "12px",
+                       "backgroundColor": "#070707",
+                       }),
         ],
-            style={"position": "relative", "height": "100vh"}
-        ),
+            id="log-div",
+            style={
+                "display": "flex",
+                "flexDirection": "row",
+                "alignItems": "stretch",
+                "height": "100%",
+                "width": "100%",
+                "position": "relative",
+        })
 
-        self.historyDiv = html.Div(id="history-div", style={"padding": "8px"})
-        self.strikeDiv = html.Div(id="strike-div", style={"padding": "8px"})
+        self.historyDiv = html.Div(
+            id="history-div",
+            style={"padding": "8px"}
+        )
+
+        self.strikeDiv = html.Div([
+            html.H4("Strike Detection", style={"color": "white"}),
+            dcc.Graph(
+                id="strike-time-series-graph",
+                config={"displayModeBar": False},
+                style={"height": "40vh", "width": "100%"}
+            ),
+        ],
+            id="strike-div",
+            style={"padding": "8px"}
+        )
 
         self.app.layout = html.Div([
-            *self.eventQueueManager.finalElements(),
+            *self.eventQueueManager.getFinalElements(),
             dcc.Store(id="strikepoint-session-store", storage_type="session"),
             dcc.Location(id='strikepoint-url', refresh=False),
             self.calibrationUi.modal,
             self.navbar,
-            html.Div(self.loggingDiv,
-                     id="page-content",
-                     style={"position": "relative", "height": "100vh"}),
+            html.Div(
+                self.strikeDiv,
+                id="page-content",
+                style={"position": "relative", "height": "100vh"}
+            ),
         ],
             style={"height": "100vh", "backgroundColor": "#0f1724"}
         )
+
+        self.app.validation_layout = self.app.layout
+
+    def _updateLogEntriesHandler(self, log_content_div_children, eventData: list):
+        for (r, msg) in eventData:
+            color = self.LEVEL_NAME_COLOR_MAP.get(r.levelname, "white")
+            self.logMessages.append(html.Div(msg, style={
+                "color": color, "margin": "0", "padding": "0"}))
+        return self.logMessages
 
     def _addHistoryCardHandler(self, history_div_children, eventData: list):
         for card in eventData:
@@ -221,8 +283,43 @@ class StrikePointDashApp:
         self.eventQueueManager.fireEvent('add-history-card', card)
         self.eventQueueManager.fireEvent('update-calibration-status')
 
+    def _updateStrikeTimeSeriesGraphHandler(self, figure):
+        # Update the strike metrics DataFrame
+        windowSize = 60*9
+
+        # Create updated figure with a second y-axis for tempDelta
+        fig = px.line(
+            self.strikeMetricsDf[-windowSize:],
+            x="time",
+            y=["tempAvg", "tempDelta"],
+            labels={
+                "tempAvg": "average temperature",
+                "tempDelta": "temperature delta",
+                "time": "time",
+            },
+            title="Thermal Trends",
+            template="plotly_dark",
+        )
+
+        if len(self.strikeMetricsDf) > windowSize*2:
+            self.strikeMetricsDf = self.strikeMetricsDf.tail(windowSize)
+
+        # assign tempDelta trace to a secondary y-axis (y2)
+        for tr in fig.data:
+            if tr.name == "tempDelta":
+                tr.yaxis = "y2"
+
+        fig.update_layout(
+            yaxis=dict(title="average temperature"),
+            yaxis2=dict(title="temperature delta",
+                        overlaying="y", side="right"),
+            legend_title_text="",
+        )
+        return fig
+
     def _threadMain(self):
         frameSeq = 0
+        lastAvgTemp, avgTemp = None, None
 
         while True:
             try:
@@ -232,10 +329,26 @@ class StrikePointDashApp:
                     'visual', frameInfo.rgbFrames['visual'])
                 self.contentManager.registerVideoFrame(
                     'thermal', frameInfo.rgbFrames['thermal'])
-                self.contentManager.releaseAllFrames()
                 with self.frameWriterLock:
                     if self.frameWriter is not None:
                         self.frameWriter.writeFrameInfo(frameInfo)
+                while self.msgQueue.qsize() > 0:
+                    rtn = self.msgQueue.get_nowait()
+                    self.eventQueueManager.fireEvent('update-log-entries', rtn)
+                avgTemp = frameInfo.rawFrames['thermal'].mean()
+                if lastAvgTemp is not None:
+                    self.strikeMetricsDf = pd.concat(
+                        [self.strikeMetricsDf,
+                         pd.DataFrame([{
+                             "time": pd.Timestamp.now(),
+                             "tempDelta": avgTemp - lastAvgTemp,
+                             "tempAvg": avgTemp}])],
+                        ignore_index=True)
+                lastAvgTemp = avgTemp
+                # print(f"Frame {frameSeq}: avg thermal temp = {avgTemp:.2f}F")
+                if frameSeq % 2 == 0:
+                    self.eventQueueManager.fireEvent(
+                        'update-strike-time-series-graph')
 
                 self.calibrationUi.process(frameSeq, frameInfo)
 
@@ -254,18 +367,16 @@ class StrikePointDashApp:
                             dbc.Alert(headerText, color=color),
                             dbc.CardBody(html.Img(src=contentPath)),
                         ], style={"marginBottom": "4px"})
+                        logger.debug(
+                            f"Strike detected! Left: {result['leftScore']}, "
+                            f"Right: {result['rightScore']}")
                         self.eventQueueManager.fireEvent(
                             'add-history-card', card)
 
             except Exception as ex:
-                _getLogger().error(
+                logger.error(
                     f"StrikePointDashApp thread exception: {ex}")
 
     def run(self, host="0.0.0.0", port=8050, debug=False, threaded=True):
         # threaded=True helps keep the MJPEG stream and Dash callbacks responsive
         self.app.run(host=host, port=port, debug=debug, threaded=threaded)
-
-
-if __name__ == "__main__":
-    app_instance = StrikePointDashApp()
-    app_instance.run()

@@ -22,37 +22,37 @@ class FrameInfo:
 class FrameInfoWriter:
 
     def __init__(self, fileName: str):
-        self.file = open(fileName, "wb")
-        self.file.write(_HEADER_MAGIC_STR)
-        self.formatVersion = 2
-        self.file.write(pack(">I", self.formatVersion))
+        self._file = open(fileName, "wb")
+        self._file.write(_HEADER_MAGIC_STR)
+        self._formatVersion = 2
+        self._file.write(pack(">I", self._formatVersion))
 
     def writeFrameInfo(self, frameInfo: FrameInfo):
         outputMap = dict(mapVersion=3,
                          timestamp=frameInfo.timestamp,
                          rgbFrames=dict(), rawFrames=dict(),
                          metadata=frameInfo.metadata)
-        for key, value in frameInfo.rgbFrames.items():
-            ok, encoded = cv2.imencode(".png", value)
+        for key, frame in frameInfo.rgbFrames.items():
+            ok, encoded = cv2.imencode(".jpg", frame)
             if not ok:
                 raise RuntimeError(f"Failed to encode frame for key {key}")
             outputMap['rgbFrames'][key] = encoded.tobytes()
-        for key, value in frameInfo.rawFrames.items():
-            if not isinstance(value, np.ndarray):
+        for key, frame in frameInfo.rawFrames.items():
+            if not isinstance(frame, np.ndarray):
                 raise RuntimeError(f"rawFrames[{key}] must be a numpy array")
             # store shape and dtype so reader can reconstruct the array
             outputMap['rawFrames'][key] = {
-                "shape": list(value.shape),
-                "dtype": str(value.dtype),
-                "bytes": value.tobytes()
+                "shape": list(frame.shape),
+                "dtype": str(frame.dtype),
+                "bytes": frame.tobytes()
             }
 
         frame = packb(outputMap)
-        self.file.write(pack(">I", len(frame)))
-        self.file.write(frame)
+        self._file.write(pack(">I", len(frame)))
+        self._file.write(frame)
 
     def close(self):
-        self.file.close()
+        self._file.close()
 
     def __enter__(self):
         return self
@@ -64,26 +64,26 @@ class FrameInfoWriter:
 class FrameInfoReader:
 
     def __init__(self, fileName: str):
-        self.file = open(fileName, "rb")
+        self._file = open(fileName, "rb")
         self.rewind()
-        
+
     def rewind(self):
-        self.file.seek(0)
-        header = self.file.read(len(_HEADER_MAGIC_STR))
+        self._file.seek(0)
+        header = self._file.read(len(_HEADER_MAGIC_STR))
         if header != _HEADER_MAGIC_STR:
             raise RuntimeError("Invalid file format")
-        (formatVersion,) = unpack(">I", self.file.read(4))
+        (formatVersion,) = unpack(">I", self._file.read(4))
         if formatVersion not in (1, 2):
             raise RuntimeError(
                 f"Unsupported file format version {formatVersion}")
 
     def readFrameInfo(self) -> np.ndarray:
-        header = self.file.read(4)
+        header = self._file.read(4)
         if not header:
             return None
 
         (size,) = unpack(">I", header)
-        fileData = self.file.read(size)
+        fileData = self._file.read(size)
         if len(fileData) != size:
             raise EOFError("Unexpected end of stream")
         inputMap = unpackb(fileData)
@@ -115,7 +115,7 @@ class FrameInfoReader:
         return frameInfoList
 
     def close(self):
-        self.file.close()
+        self._file.close()
 
     def __enter__(self):
         return self

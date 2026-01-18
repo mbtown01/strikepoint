@@ -84,7 +84,7 @@ class FileBasedFrameProvider(FrameProvider):
 
 
 class FrameProducer:
-    """Background thread capturing frames and keeping the latest PNG bytes
+    """Background thread capturing frames and keeping the latest image
     and min/max temperatures.
     """
 
