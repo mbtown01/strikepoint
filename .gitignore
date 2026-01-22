@@ -1,6 +1,6 @@
 # Strikepoint-specific stuff
-lepton/Release
-lepton/Debug
+cpp/Release
+cpp/Debug
 *.log
 *.db
 *.bin

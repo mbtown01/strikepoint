@@ -19,37 +19,39 @@ set(LEPTON_DIR ${CMAKE_SOURCE_DIR})
 include_directories(${LEPTON_DIR}/sdk)
 include_directories(${LEPTON_DIR}/src)
 
-# Convert glob to actual source list (only .c files)
-file(GLOB LEPTON_SRCS "${LEPTON_DIR}/sdk/*.c" "${LEPTON_DIR}/src/*.c*") 
+# Convert glob to actual source list (only .c/.cpp files)
+file(GLOB LEPTON_SRCS "${LEPTON_DIR}/sdk/*.c"
+                      "${LEPTON_DIR}/src/*.c"
+                      "${LEPTON_DIR}/src/*.cpp") 
 
-add_library(lepton_objs OBJECT ${LEPTON_SRCS})
-set_target_properties(lepton_objs PROPERTIES POSITION_INDEPENDENT_CODE ON)
+add_library(strikepoint_objs OBJECT ${LEPTON_SRCS})
+set_target_properties(strikepoint_objs PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # Optionally set include dirs for the object target
-target_include_directories(lepton_objs PRIVATE ${LEPTON_DIR})
+target_include_directories(strikepoint_objs PRIVATE ${LEPTON_DIR})
 
 # Define DEBUG only for Debug builds. Use generator-expression so the define
 # is added when CONFIG is Debug and not for Release/RelWithDebInfo/etc.
 target_compile_definitions(
-    lepton_objs PRIVATE $<$<CONFIG:Debug>:DEBUG=1>)
+    strikepoint_objs PRIVATE $<$<CONFIG:Debug>:DEBUG=1>)
 
-add_library(lepton_driver_static STATIC $<TARGET_OBJECTS:lepton_objs>)
-add_library(lepton_driver SHARED $<TARGET_OBJECTS:lepton_objs>)
+add_library(strikepoint_driver_static STATIC $<TARGET_OBJECTS:strikepoint_objs>)
+add_library(strikepoint_driver SHARED $<TARGET_OBJECTS:strikepoint_objs>)
 
 # Position independent for shared lib
-set_target_properties(lepton_driver_static PROPERTIES OUTPUT_NAME lepton)
-set_target_properties(lepton_driver PROPERTIES OUTPUT_NAME lepton)
+set_target_properties(strikepoint_driver_static PROPERTIES OUTPUT_NAME strikepoint)
+set_target_properties(strikepoint_driver PROPERTIES OUTPUT_NAME strikepoint)
 
 # Link standard libs commonly used by the driver
 find_package(Threads REQUIRED)
-target_link_libraries(lepton_driver_static PRIVATE Threads::Threads m dl)
-target_link_libraries(lepton_driver PRIVATE Threads::Threads m dl)
+target_link_libraries(strikepoint_driver_static PRIVATE Threads::Threads m dl)
+target_link_libraries(strikepoint_driver PRIVATE Threads::Threads m dl)
 
 # Optional: build a capture executable if the source exists
 if(EXISTS "${LEPTON_DIR}/utils/capture.c")
     add_executable(capture "${LEPTON_DIR}/utils/capture.c")
     target_include_directories(capture PRIVATE ${LEPTON_DIR})
-    target_link_libraries(capture PRIVATE lepton_driver_static Threads::Threads m dl)
+    target_link_libraries(capture PRIVATE strikepoint_driver_static Threads::Threads m dl)
 endif()
 
 # GoogleTest-based tests (optional)
@@ -59,7 +61,7 @@ if(GTest_FOUND)
     file(GLOB LEPTON_TEST_SRCS "${LEPTON_DIR}/test/*.cpp") 
     add_executable(gtest_driver ${LEPTON_TEST_SRCS})
     target_include_directories(gtest_driver PRIVATE ${LEPTON_DIR})
-    target_link_libraries(gtest_driver PRIVATE GTest::gtest_main lepton_driver_static Threads::Threads m dl)
+    target_link_libraries(gtest_driver PRIVATE GTest::gtest_main strikepoint_driver_static Threads::Threads m dl)
     add_test(NAME gtest_driver COMMAND gtest_driver)
 endif()
 
@@ -69,7 +71,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # install rules (optional)
-install(TARGETS lepton_driver lepton_driver_static
+install(TARGETS strikepoint_driver strikepoint_driver_static
         RUNTIME DESTINATION bin
         LIBRARY DESTINATION lib
         ARCHIVE DESTINATION lib)

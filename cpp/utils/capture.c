@@ -75,9 +75,9 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    LEPDRV_DriverInfo driverInfo;
-    LEPDRV_SessionHandle hndl;
-    if (0 != LEPDRV_Init(&hndl, &driverInfo, "stdout")) {
+    SPLIB_DriverInfo driverInfo;
+    SPLIB_SessionHandle hndl;
+    if (0 != SPLIB_Init(&hndl, &driverInfo, "stdout")) {
         fprintf(stderr, "Error initializing Lepton driver\n");
         exit(1);
     }
@@ -92,19 +92,25 @@ int main(int argc, char *argv[]) {
 
     // If we needed to set units or anything, we'd do that before we
     // start polling here
-    LEPDRV_StartPolling(hndl);
+    SPLIB_LeptonStartPolling(hndl);
 
-    LEPDRV_LogLevel level;
+    int level;
     char logBuffer[4096];
+    int msgRemaining = 0;
+    static const char *LOG_LEVEL_MAP[] = {
+        "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"};
 
     CRC16 crcOld = 0;
     for (int i = 0; i < frames; i++) {
-        while (0 == LEPDRV_GetNextLogEntry(
-                        hndl, &level, logBuffer, sizeof(logBuffer)))
-            printf("LOG [%d]: %s\n", level, logBuffer);
+        do {
+            SPLIB_GetNextLogEntry(
+                hndl, &level, logBuffer, sizeof(logBuffer), &msgRemaining);
+            if (msgRemaining >= 0)
+                printf("LOG [%s]: %s\n", LOG_LEVEL_MAP[level], logBuffer);
+        } while (msgRemaining > 0);
 
         double start = get_time_sec();
-        if (0 != LEPDRV_GetFrame(hndl, buffer)) {
+        if (0 != SPLIB_LeptonGetFrame(hndl, buffer)) {
             fprintf(stderr, "Error capturing frame %d\n", i);
             break;
         }
@@ -130,20 +136,20 @@ int main(int argc, char *argv[]) {
         double delay = (1.0 / fps) - elapsed;
         printf("Frame %d crc=%x elapsed=%lf delay=%lf min=%f, max=%f\n",
                i, crcNew, elapsed, delay, minVal, maxVal);
-        // for( int i=0; i<16; i++)
-        //     printf("%f ", buffer[i]);
-        // printf("\n");
         if (delay > 0)
             usleep(delay * 1e6);
     }
 
-    while (0 == LEPDRV_GetNextLogEntry(hndl, &level, logBuffer,
-                                       sizeof(logBuffer)))
-        printf("FINAL [%d]: %s\n", level, logBuffer);
+    do {
+        SPLIB_GetNextLogEntry(
+            hndl, &level, logBuffer, sizeof(logBuffer), &msgRemaining);
+        if (msgRemaining >= 0)
+            printf("FINAL [%s]: %s\n", LOG_LEVEL_MAP[level], logBuffer);
+    } while (msgRemaining > 0);
 
     close(fd);
     printf("Done capturing frames, calling shutdown\n");
-    LEPDRV_Shutdown(hndl);
+    SPLIB_Shutdown(hndl);
 
     return 0;
 }

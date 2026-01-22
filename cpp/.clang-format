@@ -5,11 +5,18 @@ BasedOnStyle: LLVM
 
 # Indentation
 IndentWidth: 4
+TabWidth: 4
 UseTab: Never
+IndentAccessModifiers: True
+BreakConstructorInitializers: AfterColon
+PackConstructorInitializers: Never
 
 # Brace placement
-BreakBeforeBraces: Attach           # Keep opening braces on the same line
+BreakBeforeBraces: Custom
+BraceWrapping:
+    AfterFunction: True
 AlignClosingBraceWithControl: false # Closing braces are not indented
+BreakAfterReturnType: TopLevelDefinitions
 
 # Spaces
 SpaceAfterCStyleCast: true

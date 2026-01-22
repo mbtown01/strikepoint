@@ -42,7 +42,7 @@ class LeptonFrameProvider(FrameProvider):
         frame = self.leptonDriver.getFrame()
         while (entry := self.leptonDriver.getNextLogEntry()) is not None:
             level, msg = entry
-            logger.log(level, f"(liblepton) {msg}")
+            logger.log(level, f"(libstrikepoint) {msg}")
 
         frame = cv2.flip(frame, 0)
         frame = cv2.flip(frame, 1)

@@ -10,20 +10,19 @@ from time import time
 
 
 class LeptonDriver(FrameProvider):
-    """ctypes wrapper around LEPDRV_* functions from the C driver.
+    """ctypes wrapper around SPLIB_* functions from the C driver.
     """
     class TemperatureUnit(IntEnum):
         KELVIN = 0
         CELCIUS = 1
         FAHRENHEIT = 2
 
-    class LEPDRV_DriverInfo(ctypes.Structure):
+    class SPLIB_DriverInfo(ctypes.Structure):
         _fields_ = [
             ("versionMajor", ctypes.c_uint8),
             ("versionMinor", ctypes.c_uint8),
             ("framwidth", ctypes.c_uint16),
             ("frameHeight", ctypes.c_uint16),
-            ("maxLogEntries", ctypes.c_uint32),
         ]
 
     _logLevelMap = {
@@ -35,9 +34,9 @@ class LeptonDriver(FrameProvider):
     }
 
     allFnNameList = [
-        "LEPDRV_Shutdown", "LEPDRV_Init", "LEPDRV_GetFrame",
-        "LEPDRV_CameraDisable", "LEPDRV_SetTemperatureUnits", 
-        "LEPDRV_StartPolling", "LEPDRV_GetNextLogEntry"]
+        "SPLIB_Shutdown", "SPLIB_Init", "SPLIB_LeptonGetFrame",
+        "SPLIB_LeptonDisable", "SPLIB_LeptonSetTemperatureUnits",
+        "SPLIB_LeptonStartPolling", "SPLIB_GetNextLogEntry"]
 
     def __init__(self, logPath: str = None):
         libPath = LeptonDriver.find_library_path()
@@ -51,84 +50,85 @@ class LeptonDriver(FrameProvider):
             self.fnMap[fnName].restype = ctypes.c_int
             self.fnMap[fnName].argtypes = [ctypes.c_void_p]
 
-        self.fnMap["LEPDRV_Init"].argtypes = [
+        self.fnMap["SPLIB_Init"].argtypes = [
             ctypes.POINTER(ctypes.c_void_p),
-            ctypes.POINTER(LeptonDriver.LEPDRV_DriverInfo),
+            ctypes.POINTER(LeptonDriver.SPLIB_DriverInfo),
             ctypes.c_char_p]
-        self.fnMap["LEPDRV_GetFrame"].argtypes = [
+        self.fnMap["SPLIB_LeptonGetFrame"].argtypes = [
             ctypes.c_void_p, ctypes.POINTER(ctypes.c_float)]
-        self.fnMap["LEPDRV_SetTemperatureUnits"].argtypes = [
+        self.fnMap["SPLIB_LeptonSetTemperatureUnits"].argtypes = [
             ctypes.c_void_p, ctypes.c_int]
-        self.fnMap["LEPDRV_GetNextLogEntry"].argtypes = [
+        self.fnMap["SPLIB_GetNextLogEntry"].argtypes = [
             ctypes.c_void_p, ctypes.POINTER(ctypes.c_int), ctypes.c_char_p,
-            ctypes.c_size_t]
+            ctypes.c_size_t, ctypes.POINTER(ctypes.c_int)]
 
-        info = LeptonDriver.LEPDRV_DriverInfo()
+        info = LeptonDriver.SPLIB_DriverInfo()
         self.hndl = ctypes.c_void_p()
-        rc = self.fnMap["LEPDRV_Init"](
+        rc = self.fnMap["SPLIB_Init"](
             ctypes.byref(self.hndl), ctypes.byref(info),
             ctypes.c_char_p(logPath.encode('utf8') if logPath else None))
         if rc != 0:
-            raise RuntimeError(f"LEPDRV_Init failed rc={rc}")
+            raise RuntimeError(f"SPLIB_Init failed rc={rc}")
 
         self.frameWidth = info.framwidth
         self.frameHeight = info.frameHeight
-        self.maxLogEntries = info.maxLogEntries
 
-    def _makeApiCall(self, fnName: str, *args, throwOnError=True):
+    def _makeApiCall(self, fnName: str, *args):
         if fnName not in self.allFnNameList:
             raise RuntimeError(f"Method '{fnName}' not a valid API call")
         rc = self.fnMap[fnName](self.hndl, *args)
-        if rc != 0 and throwOnError:
+        if rc != 0:
             raise RuntimeError(f"Call to {fnName} failed rc={rc}")
         return rc
 
     def startPolling(self):
         """Start the SPI poling thread.
         """
-        self._makeApiCall("LEPDRV_StartPolling")
+        self._makeApiCall("SPLIB_LeptonStartPolling")
 
     def getFrame(self):
         """Get a single frame from the driver."""
         buf = np.empty(self.frameWidth * self.frameHeight, dtype=np.float32)
         buf_ptr = buf.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
-        self._makeApiCall("LEPDRV_GetFrame", buf_ptr)
+        self._makeApiCall("SPLIB_LeptonGetFrame", buf_ptr)
         return buf.reshape((self.frameHeight, self.frameWidth))
 
     def shutdown(self):
         """Shutdown the driver.
         """
-        self._makeApiCall("LEPDRV_Shutdown")
+        self._makeApiCall("SPLIB_Shutdown")
 
     def getNextLogEntry(self):
         """Get the next log entry from the driver.
         """
         level = ctypes.c_int()
+        msgRemaining = ctypes.c_int()
         bufferLen = 1024
         buffer = ctypes.create_string_buffer(bufferLen)
-        rc = self._makeApiCall(
-            "LEPDRV_GetNextLogEntry", ctypes.byref(level), buffer,
-            ctypes.c_size_t(bufferLen), throwOnError=False)
-        if rc == 0:
+        self._makeApiCall(
+            "SPLIB_GetNextLogEntry", ctypes.byref(level), buffer,
+            ctypes.c_size_t(bufferLen), ctypes.byref(msgRemaining))
+        if msgRemaining.value > 0:
             return (self._logLevelMap[level.value], buffer.value.decode('utf8'))
         return None
 
     def setTemperatureUnits(self, unit: TemperatureUnit):
         """Set temperature units on the driver.
         """
-        self._makeApiCall("LEPDRV_SetTemperatureUnits", ctypes.c_int(unit))
+        self._makeApiCall("SPLIB_LeptonSetTemperatureUnits",
+                          ctypes.c_int(unit))
 
     def cameraDisable(self):
         """Disable the camera.
         """
-        self._makeApiCall("LEPDRV_CameraDisable")
+        self._makeApiCall("SPLIB_LeptonDisable")
 
     @staticmethod
-    def find_library_path(name_hint="liblepton.so"):
+    def find_library_path(name_hint="libstrikepoint.so"):
         """Search common locations for the SDK shared library; return path or None."""
         candidates = [
-            os.path.join(os.getcwd(), f"lepton/Release/{name_hint}"),
-            os.path.join(os.getcwd(), f"lepton/Debug/{name_hint}"),
+            os.path.join(os.getcwd(), f"cpp/Release/{name_hint}"),
+            os.path.join(os.getcwd(), f"cpp/Debug/{name_hint}"),
             f"/usr/local/lib/{name_hint}",
             f"/usr/lib/{name_hint}",
         ]
