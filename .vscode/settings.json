@@ -22,5 +22,5 @@
     "cmake.configureOnOpen": true,
     "cmake.configureArgs": ["-DCMAKE_BUILD_TYPE=Debug"],
     "cmake.buildDirectory": "${workspaceFolder}/cpp/Debug",
-    "cmake.sourceDirectory": "/home/mbtowns/strikepoint/lepton"
+    "cmake.sourceDirectory": "/home/mbtowns/strikepoint/cpp"
 }

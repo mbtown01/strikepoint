@@ -1,7 +1,7 @@
 import unittest
 import numpy as np
 
-from strikepoint.driver import LeptonDriver
+from strikepoint.driver import SplibDriver
 from logging import getLogger
 
 
@@ -9,7 +9,7 @@ class LeptonDriverTests(unittest.TestCase):
 
     @classmethod
     def setUp(cls):
-        cls.driver = LeptonDriver(logPath=None)
+        cls.driver = SplibDriver(logPath=None)
 
     @classmethod
     def tearDown(cls):
@@ -24,15 +24,6 @@ class LeptonDriverTests(unittest.TestCase):
         frame = self.driver.getFrame()
         self.assertIsInstance(frame, np.ndarray)
         self.assertEqual(frame.shape, (60, 80))
-
-    # def test_temperature_units(self):
-    #     self.driver.setTemperatureUnits(True)
-    #     units = self.driver.getTemperatureUnits()
-    #     self.assertTrue(units)
-
-    #     self.driver.setTemperatureUnits(False)
-    #     units = self.driver.getTemperatureUnits()
-    #     self.assertFalse(units)
 
     def test_disabled_frame(self):
         self.driver.cameraDisable()

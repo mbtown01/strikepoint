@@ -4,7 +4,7 @@
         {
             "label": "compile Debug",
             "type": "shell",
-            "command": "./lepton/compile Debug",
+            "command": "./cpp/compile Debug",
             "group": {
                 "kind": "build",
                 "isDefault": true

@@ -64,17 +64,17 @@
  * LeptonDriver - constructor for the Lepton driver
  *********************************************************************/
 strikepoint::LeptonDriver::LeptonDriver(strikepoint::Logger &logger,
+                                        SPLIB_TemperatureUnit tempUnit,
                                         const char *logFilePath) :
     _logger(logger),
-    spiFd(0),
-    tempUnit(SPLIB_TEMP_UNITS_FAHRENHEIT),
-    hasFrame(false),
-    shutdownRequested(false),
-    isRunning(false),
-    threadRtn(0)
+    _spiFd(0),
+    _tempUnit(tempUnit),
+    _hasFrame(false),
+    _shutdownRequested(false),
+    _isRunning(false)
 {
-    BAIL_ON_FAILED_ERRNO(pthread_mutex_init(&frameMutex, NULL));
-    BAIL_ON_FAILED_ERRNO(pthread_cond_init(&frameCond, NULL));
+    BAIL_ON_FAILED_ERRNO(pthread_mutex_init(&_frameMutex, NULL));
+    BAIL_ON_FAILED_ERRNO(pthread_cond_init(&_frameCond, NULL));
     _frameBuffer.resize(FRAME_WIDTH * FRAME_HEIGHT);
 
 #ifdef DEBUG
@@ -92,21 +92,21 @@ strikepoint::LeptonDriver::LeptonDriver(strikepoint::Logger &logger,
 
     LOG_INFO(_logger, "Configuring /def/spidev0.0: mode=%d, bitsPerWord=%d, speed=%d Hz",
              spiMode, spiBitsPerWord, spiSpeed);
-    spiFd = open("/dev/spidev0.0", O_RDWR);
-    if (spiFd < 0)
+    _spiFd = open("/dev/spidev0.0", O_RDWR);
+    if (_spiFd < 0)
         BAIL("Could not open SPI device");
     BAIL_ON_FAILED_ERRNO(
-        ioctl(spiFd, SPI_IOC_WR_MODE, &spiMode));
+        ioctl(_spiFd, SPI_IOC_WR_MODE, &spiMode));
     BAIL_ON_FAILED_ERRNO(
-        ioctl(spiFd, SPI_IOC_RD_MODE, &spiMode));
+        ioctl(_spiFd, SPI_IOC_RD_MODE, &spiMode));
     BAIL_ON_FAILED_ERRNO(
-        ioctl(spiFd, SPI_IOC_WR_BITS_PER_WORD, &spiBitsPerWord));
+        ioctl(_spiFd, SPI_IOC_WR_BITS_PER_WORD, &spiBitsPerWord));
     BAIL_ON_FAILED_ERRNO(
-        ioctl(spiFd, SPI_IOC_RD_BITS_PER_WORD, &spiBitsPerWord));
+        ioctl(_spiFd, SPI_IOC_RD_BITS_PER_WORD, &spiBitsPerWord));
     BAIL_ON_FAILED_ERRNO(
-        ioctl(spiFd, SPI_IOC_WR_MAX_SPEED_HZ, &spiSpeed));
+        ioctl(_spiFd, SPI_IOC_WR_MAX_SPEED_HZ, &spiSpeed));
     BAIL_ON_FAILED_ERRNO(
-        ioctl(spiFd, SPI_IOC_RD_MAX_SPEED_HZ, &spiSpeed));
+        ioctl(_spiFd, SPI_IOC_RD_MAX_SPEED_HZ, &spiSpeed));
 
     // Initialize and open the camera port (example values)
     LOG_INFO(_logger, "Configuring camera port");
@@ -170,10 +170,10 @@ strikepoint::LeptonDriver::LeptonDriver(strikepoint::Logger &logger,
  *********************************************************************/
 strikepoint::LeptonDriver::~LeptonDriver()
 {
-    BAIL_ON_FAILED_ERRNO(pthread_mutex_destroy(&frameMutex));
-    BAIL_ON_FAILED_ERRNO(pthread_cond_destroy(&frameCond));
+    BAIL_ON_FAILED_ERRNO(pthread_mutex_destroy(&_frameMutex));
+    BAIL_ON_FAILED_ERRNO(pthread_cond_destroy(&_frameCond));
 
-    BAIL_ON_FAILED_ERRNO(close(spiFd));
+    BAIL_ON_FAILED_ERRNO(close(_spiFd));
     BAIL_ON_FAILED_LEP(LEP_ClosePort(&_portDesc));
 }
 
@@ -185,13 +185,13 @@ strikepoint::LeptonDriver::shutdown()
 {
     LOG_DEBUG(_logger, "Driver shutdown requested, waiting for capture thread");
     void *rtnval = NULL;
-    shutdownRequested = true;
+    _shutdownRequested = true;
     BAIL_ON_FAILED_ERRNO(pthread_join(_thread, &rtnval));
 
-    if (isRunning)
+    if (_isRunning)
         LOG_ERROR(_logger, "shutdown() called but session is still running");
-    if (threadRtn)
-        LOG_ERROR(_logger, "SPI polling thread rtn=%d", threadRtn);
+    if (rtnval != NULL)
+        LOG_ERROR(_logger, "SPI polling thread returned with errors");
 
     LOG_DEBUG(_logger, "Driver shutdown complete");
 }
@@ -217,7 +217,7 @@ strikepoint::LeptonDriver::getDriverInfo(SPLIB_DriverInfo *info)
 void
 strikepoint::LeptonDriver::startPolling()
 {
-    if (isRunning)
+    if (_isRunning)
         BAIL("Attempt to start already running polling thread");
 
     // Kickoff the driver thread
@@ -226,9 +226,9 @@ strikepoint::LeptonDriver::startPolling()
         &_thread, NULL, _spiPollingThreadMain, (void *) this));
 
     // Give the pthread 5 seconds to start up
-    for (int i = 0; i < 5000 && !isRunning; i++)
+    for (int i = 0; i < 5000 && !_isRunning; i++)
         usleep(1000);
-    if (!isRunning)
+    if (!_isRunning)
         BAIL("Somehow the polling thread never started");
 }
 
@@ -306,20 +306,6 @@ strikepoint::LeptonDriver::cameraEnable()
 }
 
 /*********************************************************************
- * setTemperatureUnits - set the temperature units for returned frames
- *********************************************************************/
-void
-strikepoint::LeptonDriver::setTemperatureUnits(SPLIB_TemperatureUnit unit)
-{
-    if (unit < 0 || unit >= SPLIB_TEMP_UNITS_MAX)
-        BAIL("Invalid temperature unit %d", unit);
-    const char *unitNames[] = {"Kelvin", "Celsius", "Fahrenheit"};
-
-    LOG_DEBUG(_logger, "Setting temperature units to %s", unitNames[unit]);
-    tempUnit = unit;
-}
-
-/*********************************************************************
  * getFrame - capture a single frame from the Lepton camera
  *
  * The Lepton v2.5 only generates frames at ~8.7 FPS, so this function
@@ -328,21 +314,18 @@ strikepoint::LeptonDriver::setTemperatureUnits(SPLIB_TemperatureUnit unit)
 void
 strikepoint::LeptonDriver::getFrame(float *frameBuffer)
 {
-    if (!isRunning)
+    if (!_isRunning)
         BAIL("Frame requested but SPI polling thread not running");
-    if (shutdownRequested)
+    if (_shutdownRequested)
         BAIL("SDK is shutting down");
 
-    pthread_mutex_lock(&frameMutex);
-    pthread_cond_wait(&frameCond, &frameMutex);
-    if (hasFrame)
+    pthread_mutex_lock(&_frameMutex);
+    pthread_cond_wait(&_frameCond, &_frameMutex);
+    if (_hasFrame)
         memcpy(frameBuffer, &(_frameBuffer[0]),
                sizeof(float) * FRAME_HEIGHT * FRAME_WIDTH);
-    hasFrame = false;
-    pthread_mutex_unlock(&frameMutex);
-
-    if (threadRtn)
-        BAIL("Call to SPLIB_LeptonGetFrame failed, polling thread exited abonrmally");
+    _hasFrame = false;
+    pthread_mutex_unlock(&_frameMutex);
 }
 
 /*********************************************************************
@@ -373,26 +356,28 @@ strikepoint::LeptonDriver::_spiPollingThreadMain(void *arg)
     bool threwException = true;
 
     try {
-        driver->isRunning = true;
+        driver->_isRunning = true;
         driver->_driverMain();
         threwException = false;
     } catch (const strikepoint::bail_error &e) {
         driver->_logger.log(
-            e.file().c_str(), e.line(), LOG_LEVEL_ERROR, e.what());
+            e.file().c_str(), e.line(), SPLIB_LOG_LEVEL_ERROR, e.what());
     } catch (const std::exception &e) {
         driver->_logger.log(
-            __FILE__, __LINE__, LOG_LEVEL_ERROR, e.what());
+            __FILE__, __LINE__, SPLIB_LOG_LEVEL_ERROR, e.what());
     }
+
+    driver->_isRunning = false;
 
     if (threwException) {
-        pthread_mutex_lock(&driver->frameMutex);
-        driver->hasFrame = false;
-        pthread_cond_signal(&driver->frameCond);
-        pthread_mutex_unlock(&driver->frameMutex);
+        pthread_mutex_lock(&driver->_frameMutex);
+        driver->_hasFrame = false;
+        pthread_cond_signal(&driver->_frameCond);
+        pthread_mutex_unlock(&driver->_frameMutex);
+        return (void *) -1;
     }
 
-    driver->isRunning = false;
-    return NULL;
+    return (void *) 0;
 }
 
 /*********************************************************************
@@ -409,13 +394,13 @@ strikepoint::LeptonDriver::_driverMain()
     ssize_t bytesRead;
     CRC16 lastCrc = 0;
 
-    while (shutdownRequested == false && failedAttempsRemaining > 0) {
+    while (_shutdownRequested == false && failedAttempsRemaining > 0) {
         // Read from SPI until we see the start of a frame
         int tries = 100;
-        _safeRead(spiFd, buff[0], PACKET_SIZE);
+        _safeRead(_spiFd, buff[0], PACKET_SIZE);
         while ((buff[0][0] & 0x0F) != 0 && buff[0][1] != 0 && tries-- > 0) {
             usleep(10000);
-            _safeRead(spiFd, buff[0], PACKET_SIZE);
+            _safeRead(_spiFd, buff[0], PACKET_SIZE);
         }
         if (tries == 0)
             continue;
@@ -423,7 +408,7 @@ strikepoint::LeptonDriver::_driverMain()
         // After seeing the start of a frame, read the rest of the packets
         int goodPackets = 1;
         for (int p = 1; p < PACKETS_PER_FRAME; p++, goodPackets++) {
-            _safeRead(spiFd, buff[p], PACKET_SIZE);
+            _safeRead(_spiFd, buff[p], PACKET_SIZE);
             if ((buff[p][0] & 0x0F) != 0 || buff[p][1] != p)
                 break;
         }
@@ -444,9 +429,9 @@ strikepoint::LeptonDriver::_driverMain()
             int r = i / FRAME_WIDTH, c = i % FRAME_WIDTH;
             uint16_t v = (buff[r][4 + 2 * c] << 8) + buff[r][4 + 2 * c + 1];
             float k = (float) v * 0.01f;
-            if (tempUnit == SPLIB_TEMP_UNITS_CELCIUS)
+            if (_tempUnit == SPLIB_TEMP_UNITS_CELCIUS)
                 k = k - 273.15f;
-            else if (tempUnit == SPLIB_TEMP_UNITS_FAHRENHEIT)
+            else if (_tempUnit == SPLIB_TEMP_UNITS_FAHRENHEIT)
                 k = ((k - 273.15f) * 9.0f / 5.0f) + 32.0f;
             localBuffer[i] = k;
         }
@@ -454,11 +439,11 @@ strikepoint::LeptonDriver::_driverMain()
         // Only wake up a getFrame caller if this frame is unique
         CRC16 crc = CalcCRC16Bytes(sizeof(localBuffer), (char *) localBuffer);
         if (lastCrc != crc) {
-            pthread_mutex_lock(&frameMutex);
+            pthread_mutex_lock(&_frameMutex);
             memcpy(&_frameBuffer[0], localBuffer, sizeof(localBuffer));
-            hasFrame = true;
-            pthread_cond_signal(&frameCond);
-            pthread_mutex_unlock(&frameMutex);
+            _hasFrame = true;
+            pthread_cond_signal(&_frameCond);
+            pthread_mutex_unlock(&_frameMutex);
             lastCrc = crc;
             matchingCrcCount = 0;
             failedAttempsRemaining = maxFailedAttempts;

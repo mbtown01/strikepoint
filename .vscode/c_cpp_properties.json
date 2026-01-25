@@ -2,12 +2,12 @@
     "configurations": [
         {
             "name": "Linux",
-            "compileCommands": "${workspaceFolder}/build/compile_commands.json",
+            "compileCommands": "${workspaceFolder}/cpp/Debug/compile_commands.json",
             "intelliSenseMode": "gcc-x64",
             "cStandard": "c11",
             "cppStandard": "c++14",
             "includePath": [
-                "${workspaceFolder}/**"
+                "${workspaceFolder}/cpp/**"
             ]
         }
     ],

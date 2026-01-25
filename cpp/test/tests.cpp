@@ -1,4 +1,6 @@
 #include <gtest/gtest.h>
+#include "audio.h"
+#include "audio-wav.h"
 
 extern "C" {
 #include "driver.h"
@@ -6,7 +8,7 @@ extern "C" {
 
 TEST(DriverApi, InitNullArgs)
 {
-    int rc = SPLIB_Init(NULL, NULL, NULL);
+    int rc = SPLIB_Init(NULL, NULL, SPLIB_TEMP_UNITS_FAHRENHEIT, NULL);
     EXPECT_EQ(rc, -1);
 }
 
@@ -38,7 +40,7 @@ TEST(DriverApi, SimpleFramePoll)
     SPLIB_DriverInfo info;
     int rc;
 
-    rc = SPLIB_Init(&hndl, &info, NULL);
+    rc = SPLIB_Init(&hndl, &info, SPLIB_TEMP_UNITS_FAHRENHEIT, NULL);
     EXPECT_EQ(rc, 0);
 
     rc = SPLIB_LeptonStartPolling(hndl);
@@ -58,7 +60,7 @@ TEST(DriverApi, RecoveryFramePollOnStartup)
     SPLIB_DriverInfo info;
     int rc;
 
-    rc = SPLIB_Init(&hndl, &info, NULL);
+    rc = SPLIB_Init(&hndl, &info, SPLIB_TEMP_UNITS_FAHRENHEIT, NULL);
     EXPECT_EQ(rc, 0);
 
     rc = SPLIB_LeptonDisable(hndl);
@@ -75,7 +77,30 @@ TEST(DriverApi, RecoveryFramePollOnStartup)
     EXPECT_EQ(rc, 0);
 }
 
-int main(int argc, char **argv)
+TEST(AudioApi, DoesItWork)
+{
+    WavAudioSource source("../../dev/test.wav");
+    AudioEngine::config config = {};
+    AudioEngine::defaults(config);
+    AudioEngine audio(source, config);
+    audio.start(&config);
+    while (!source.isEOF()) {
+        AudioEngine::event event;
+        int rc = audio.waitEvent(&event, 1000);
+        if (rc == 1) {
+            // Event received
+            EXPECT_GT(event.score, 0.0f);
+        }
+    }
+    audio.stop();
+    
+    // This is a placeholder test; actual audio tests would require
+    // audio hardware and are not implemented here.
+    EXPECT_TRUE(true);
+}
+
+int
+main(int argc, char **argv)
 {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();

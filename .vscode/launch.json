@@ -8,7 +8,7 @@
             "name": "Web app (live)",
             "type": "debugpy",
             "request": "launch",
-            "program": "main-rpi.py",
+            "program": "main.py",
             "console": "internalConsole",
             "cwd": "${workspaceFolder}"
         },
@@ -16,7 +16,7 @@
             "name": "Web app (testing)",
             "type": "debugpy",
             "request": "launch",
-            "program": "main-rpi.py",
+            "program": "main.py",
             "console": "internalConsole",
             "args": [
                 "--input-recording",

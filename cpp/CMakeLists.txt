@@ -44,14 +44,16 @@ set_target_properties(strikepoint_driver PROPERTIES OUTPUT_NAME strikepoint)
 
 # Link standard libs commonly used by the driver
 find_package(Threads REQUIRED)
-target_link_libraries(strikepoint_driver_static PRIVATE Threads::Threads m dl)
-target_link_libraries(strikepoint_driver PRIVATE Threads::Threads m dl)
+target_link_libraries(strikepoint_driver_static PRIVATE Threads::Threads m dl asound sndfile)
+target_link_libraries(strikepoint_driver PRIVATE 
+    Threads::Threads m dl asound sndfile liquid)
 
 # Optional: build a capture executable if the source exists
 if(EXISTS "${LEPTON_DIR}/utils/capture.c")
     add_executable(capture "${LEPTON_DIR}/utils/capture.c")
     target_include_directories(capture PRIVATE ${LEPTON_DIR})
-    target_link_libraries(capture PRIVATE strikepoint_driver_static Threads::Threads m dl)
+    target_link_libraries(capture PRIVATE strikepoint_driver_static 
+        Threads::Threads m dl asound liquid sndfile)
 endif()
 
 # GoogleTest-based tests (optional)
@@ -61,7 +63,8 @@ if(GTest_FOUND)
     file(GLOB LEPTON_TEST_SRCS "${LEPTON_DIR}/test/*.cpp") 
     add_executable(gtest_driver ${LEPTON_TEST_SRCS})
     target_include_directories(gtest_driver PRIVATE ${LEPTON_DIR})
-    target_link_libraries(gtest_driver PRIVATE GTest::gtest_main strikepoint_driver_static Threads::Threads m dl)
+    target_link_libraries(gtest_driver PRIVATE GTest::gtest_main strikepoint_driver_static 
+        asound Threads::Threads m dl liquid sndfile)
     add_test(NAME gtest_driver COMMAND gtest_driver)
 endif()
 

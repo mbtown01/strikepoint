@@ -5,9 +5,10 @@ BasedOnStyle: LLVM
 
 # Indentation
 IndentWidth: 4
+ContinuationIndentWidth: 4
 TabWidth: 4
 UseTab: Never
-IndentAccessModifiers: True
+IndentAccessModifiers: False
 BreakConstructorInitializers: AfterColon
 PackConstructorInitializers: Never
 

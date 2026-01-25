@@ -20,7 +20,9 @@
 Simple utility to create dummy data file for testing
 */
 
-static void usage(const char *prog) {
+static void
+usage(const char *prog)
+{
     fprintf(stderr, "Usage: %s [--frames N] [-f N] [--output FILE] [-o FILE]\n", prog);
     fprintf(stderr, "  --frames N, -f N         Number of frames to capture (default 256)\n");
     fprintf(stderr, "  --fps N, -d N            Frame per second to capture (default 27)\n");
@@ -28,13 +30,17 @@ static void usage(const char *prog) {
     exit(1);
 }
 
-double get_time_sec() {
+double
+get_time_sec()
+{
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
     return now.tv_sec + now.tv_nsec / 1e9;
 }
 
-int main(int argc, char *argv[]) {
+int
+main(int argc, char *argv[])
+{
     int frames = 256;
     int fps = 27;
     const char *outfile = "output.bin";
@@ -77,7 +83,7 @@ int main(int argc, char *argv[]) {
 
     SPLIB_DriverInfo driverInfo;
     SPLIB_SessionHandle hndl;
-    if (0 != SPLIB_Init(&hndl, &driverInfo, "stdout")) {
+    if (0 != SPLIB_Init(&hndl, &driverInfo, SPLIB_TEMP_UNITS_FAHRENHEIT, "stdout")) {
         fprintf(stderr, "Error initializing Lepton driver\n");
         exit(1);
     }
@@ -94,7 +100,7 @@ int main(int argc, char *argv[]) {
     // start polling here
     SPLIB_LeptonStartPolling(hndl);
 
-    int level;
+    SPLIB_LogLevel level;
     char logBuffer[4096];
     int msgRemaining = 0;
     static const char *LOG_LEVEL_MAP[] = {

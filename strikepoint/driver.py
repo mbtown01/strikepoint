@@ -9,7 +9,7 @@ from enum import IntEnum
 from time import time
 
 
-class LeptonDriver(FrameProvider):
+class SplibDriver(FrameProvider):
     """ctypes wrapper around SPLIB_* functions from the C driver.
     """
     class TemperatureUnit(IntEnum):
@@ -35,11 +35,11 @@ class LeptonDriver(FrameProvider):
 
     allFnNameList = [
         "SPLIB_Shutdown", "SPLIB_Init", "SPLIB_LeptonGetFrame",
-        "SPLIB_LeptonDisable", "SPLIB_LeptonSetTemperatureUnits",
-        "SPLIB_LeptonStartPolling", "SPLIB_GetNextLogEntry"]
+        "SPLIB_LeptonDisable", "SPLIB_LeptonStartPolling", 
+        "SPLIB_GetNextLogEntry"]
 
     def __init__(self, logPath: str = None):
-        libPath = LeptonDriver.find_library_path()
+        libPath = SplibDriver.find_library_path()
         lib = ctypes.CDLL(libPath)
 
         self.fnMap = dict()
@@ -52,20 +52,20 @@ class LeptonDriver(FrameProvider):
 
         self.fnMap["SPLIB_Init"].argtypes = [
             ctypes.POINTER(ctypes.c_void_p),
-            ctypes.POINTER(LeptonDriver.SPLIB_DriverInfo),
+            ctypes.POINTER(SplibDriver.SPLIB_DriverInfo),
+            ctypes.c_int,
             ctypes.c_char_p]
         self.fnMap["SPLIB_LeptonGetFrame"].argtypes = [
             ctypes.c_void_p, ctypes.POINTER(ctypes.c_float)]
-        self.fnMap["SPLIB_LeptonSetTemperatureUnits"].argtypes = [
-            ctypes.c_void_p, ctypes.c_int]
         self.fnMap["SPLIB_GetNextLogEntry"].argtypes = [
             ctypes.c_void_p, ctypes.POINTER(ctypes.c_int), ctypes.c_char_p,
             ctypes.c_size_t, ctypes.POINTER(ctypes.c_int)]
 
-        info = LeptonDriver.SPLIB_DriverInfo()
+        info = SplibDriver.SPLIB_DriverInfo()
         self.hndl = ctypes.c_void_p()
         rc = self.fnMap["SPLIB_Init"](
             ctypes.byref(self.hndl), ctypes.byref(info),
+            ctypes.c_int(SplibDriver.TemperatureUnit.FAHRENHEIT),
             ctypes.c_char_p(logPath.encode('utf8') if logPath else None))
         if rc != 0:
             raise RuntimeError(f"SPLIB_Init failed rc={rc}")
@@ -111,12 +111,6 @@ class LeptonDriver(FrameProvider):
         if msgRemaining.value > 0:
             return (self._logLevelMap[level.value], buffer.value.decode('utf8'))
         return None
-
-    def setTemperatureUnits(self, unit: TemperatureUnit):
-        """Set temperature units on the driver.
-        """
-        self._makeApiCall("SPLIB_LeptonSetTemperatureUnits",
-                          ctypes.c_int(unit))
 
     def cameraDisable(self):
         """Disable the camera.

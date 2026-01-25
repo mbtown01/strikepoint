@@ -41,7 +41,7 @@ strikepoint::Logger::~Logger()
 void
 strikepoint::Logger::log(const char *fileName,
                          const int line,
-                         const LogLevel logLevel,
+                         const SPLIB_LogLevel logLevel,
                          const char *format, ...)
 {
     time_t rawtime;

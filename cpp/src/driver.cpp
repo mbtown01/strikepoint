@@ -12,8 +12,8 @@
 using namespace strikepoint;
 
 typedef struct {
-        Logger *logger;
-        LeptonDriver *driver;
+    Logger *logger;
+    LeptonDriver *driver;
 } SessionData;
 
 int
@@ -21,10 +21,8 @@ _errorHandler(SessionData *sessionData,
               const char *funcName,
               std::function<void(void)> func)
 {
-    if (sessionData == NULL) {
-        fprintf(stderr, "Error: NULL session data in %s\n", funcName);
+    if (sessionData == NULL)
         return -1;
-    }
 
     Logger &logger = *(sessionData->logger);
 
@@ -34,28 +32,29 @@ _errorHandler(SessionData *sessionData,
         // LOG_DEBUG(logger, "EXITING %s", funcName);
         return 0;
     } catch (const strikepoint::bail_error &e) {
-        logger.log(e.file().c_str(), e.line(), LOG_LEVEL_ERROR,
+        logger.log(e.file().c_str(), e.line(), SPLIB_LOG_LEVEL_ERROR,
                    "Error in call to %s: %s", funcName, e.what());
-        logger.log(e.file().c_str(), e.line(), LOG_LEVEL_ERROR, e.what());
+        logger.log(e.file().c_str(), e.line(), SPLIB_LOG_LEVEL_ERROR, e.what());
     } catch (const std::exception &e) {
-        logger.log(__FILE__, __LINE__, LOG_LEVEL_ERROR,
+        logger.log(__FILE__, __LINE__, SPLIB_LOG_LEVEL_ERROR,
                    "Error in call to %s: %s", funcName, e.what());
-        logger.log(__FILE__, __LINE__, LOG_LEVEL_ERROR, e.what());
+        logger.log(__FILE__, __LINE__, SPLIB_LOG_LEVEL_ERROR, e.what());
     }
 
-    return -1;
+    return -2;
 }
 
 int
 SPLIB_Init(SPLIB_SessionHandle *hndlPtr,
            SPLIB_DriverInfo *info,
+           SPLIB_TemperatureUnit tempUnit,
            const char *logFilePath)
 {
     SessionData *sessionData = new SessionData;
     sessionData->logger = new Logger(logFilePath);
     return _errorHandler(sessionData, __func__, [=]() {
         sessionData->driver =
-            new LeptonDriver(*sessionData->logger, logFilePath);
+            new LeptonDriver(*sessionData->logger, tempUnit, logFilePath);
         sessionData->driver->getDriverInfo(info);
         *hndlPtr = (SPLIB_SessionHandle) sessionData;
     });
@@ -89,23 +88,13 @@ SPLIB_LeptonEnable(SPLIB_SessionHandle hndl)
 }
 
 int
-SPLIB_LeptonSetTemperatureUnits(SPLIB_SessionHandle hndl,
-                                SPLIB_TemperatureUnit unit)
-{
-    SessionData *sessionData = static_cast<SessionData *>(hndl);
-    return _errorHandler(sessionData, __func__, [=]() {
-        sessionData->driver->setTemperatureUnits(unit);
-    });
-}
-
-int
 SPLIB_GetNextLogEntry(SPLIB_SessionHandle hndl,
-                      int *logLevel,
+                      SPLIB_LogLevel *logLevel,
                       char *buffer, size_t bufferLen, int *msgRemaining)
 {
     SessionData *sessionData = static_cast<SessionData *>(hndl);
     return _errorHandler(sessionData, __func__, [=]() {
-        sessionData->logger->getNextLogEntry(logLevel, buffer, bufferLen);
+        sessionData->logger->getNextLogEntry((int *) logLevel, buffer, bufferLen);
         *msgRemaining = sessionData->logger->getMessagesRemaining();
     });
 }
