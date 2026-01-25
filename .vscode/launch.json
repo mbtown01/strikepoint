@@ -20,7 +20,7 @@
             "console": "internalConsole",
             "args": [
                 "--input-recording",
-                "dev/data/strikes.bin"
+                "dev/data/demo-with-audio.bin"
             ],
             "cwd": "${workspaceFolder}"
         },

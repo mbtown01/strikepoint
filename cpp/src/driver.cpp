@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "audio-pcm.h"
 #include "driver.h"
 #include "error.h"
 #include "lepton.h"
@@ -14,6 +15,8 @@ using namespace strikepoint;
 typedef struct {
     Logger *logger;
     LeptonDriver *driver;
+    PcmAudioSource *source;
+    AudioEngine *audioEngine;
 } SessionData;
 
 int
@@ -53,9 +56,15 @@ SPLIB_Init(SPLIB_SessionHandle *hndlPtr,
     SessionData *sessionData = new SessionData;
     sessionData->logger = new Logger(logFilePath);
     return _errorHandler(sessionData, __func__, [=]() {
+        AudioEngine::config audioConfig;
+        AudioEngine::defaults(audioConfig);
         sessionData->driver =
             new LeptonDriver(*sessionData->logger, tempUnit, logFilePath);
         sessionData->driver->getDriverInfo(info);
+        sessionData->source =
+            new PcmAudioSource("default", 48000, 1, audioConfig.blockSize);
+        sessionData->audioEngine = new AudioEngine(
+            *(sessionData->source), audioConfig);
         *hndlPtr = (SPLIB_SessionHandle) sessionData;
     });
 }
@@ -96,6 +105,23 @@ SPLIB_GetNextLogEntry(SPLIB_SessionHandle hndl,
     return _errorHandler(sessionData, __func__, [=]() {
         sessionData->logger->getNextLogEntry((int *) logLevel, buffer, bufferLen);
         *msgRemaining = sessionData->logger->getMessagesRemaining();
+    });
+}
+
+int
+SPLIB_GetAudioStrikeEvents(SPLIB_SessionHandle hndl,
+                           uint64_t *eventTimes,
+                           size_t maxEvents, size_t *numEvents)
+{
+    SessionData *sessionData = static_cast<SessionData *>(hndl);
+    return _errorHandler(sessionData, __func__, [=]() {
+        std::vector<AudioEngine::event> events;
+        sessionData->audioEngine->getEvents(events);
+        *numEvents = events.size();
+        if (*numEvents > maxEvents)
+            BAIL("Max events exceeded, max=%zu, found=%zu", maxEvents, *numEvents);
+        for (size_t i = 0; i < *numEvents; ++i)
+            eventTimes[i] = events[i].t_ns;
     });
 }
 

@@ -58,6 +58,12 @@ int SPLIB_GetNextLogEntry(SPLIB_SessionHandle hndl,
                           size_t bufferLen,
                           int *msgRemaining);
 
+// Retrieve strike event timestamps (in ns)
+int SPLIB_GetAudioStrikeEvents(SPLIB_SessionHandle hndl,
+                               uint64_t *eventTimes,
+                               size_t maxEvents,
+                               size_t *numEvents);
+
 // Close a session
 int SPLIB_Shutdown(SPLIB_SessionHandle hndl);
 

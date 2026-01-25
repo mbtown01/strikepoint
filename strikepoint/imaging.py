@@ -2,9 +2,12 @@ import cv2
 import numpy as np
 
 from enum import IntEnum
+from logging import getLogger
 from collections import defaultdict
 
 RED, GREEN, BLUE = (0, 0, 255), (0, 255, 0), (255, 0, 0)
+
+logger = getLogger("strikepoint")
 
 
 def findBrightestVisualCircles(frame):
@@ -196,7 +199,7 @@ class StrikeDetectionEngine:
 
     def __init__(self):
         self.foundBallObservedSeq = list()
-        self.foundBallExpectedSeq = tuple([True]*3 + [False]*3)
+        self.foundBallExpectedSeq = tuple([True]*2 + [False]*2)
 
     def reset(self):
         self.foundBallObservedSeq = list()
@@ -207,8 +210,11 @@ class StrikeDetectionEngine:
         visCircles = findBrightestVisualCircles(visFrame)
         foundSingleCircle = len(visCircles) == 1
         visCircle = visCircles[0] if foundSingleCircle else None
+        audioStrikeDetected = frameInfo.metadata.get(
+            'audioStrikeDetected', False)
+
         self.foundBallObservedSeq.append(
-            (frameInfo, foundSingleCircle, visCircle))
+            (frameInfo, foundSingleCircle, visCircle, audioStrikeDetected))
 
         # If we don't yet have enough data, discard
         if len(self.foundBallObservedSeq) != len(self.foundBallExpectedSeq):
@@ -218,6 +224,11 @@ class StrikeDetectionEngine:
         localSeq = self.foundBallObservedSeq
         self.foundBallObservedSeq = self.foundBallObservedSeq[1:]
         if any(a != b[1] for a, b in zip(self.foundBallExpectedSeq, localSeq)):
+            return None
+
+        audioStrikeDetected = any(a[3] for a in localSeq)
+        if not audioStrikeDetected:
+            logger.debug("Saw potential strike but no audio event detected")
             return None
 
         t1 = localSeq[0][0].rgbFrames['thermal']

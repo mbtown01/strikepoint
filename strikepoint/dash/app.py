@@ -1,3 +1,4 @@
+from time import monotonic
 import dash_bootstrap_components as dbc
 import pandas as pd
 import plotly.express as px
@@ -9,7 +10,6 @@ from queue import Queue
 from logging import getLogger
 
 from strikepoint.database import Database
-from strikepoint.producer import FrameProducer
 from strikepoint.frames import FrameInfoWriter, FrameInfo
 from strikepoint.imaging import StrikeDetectionEngine
 from strikepoint.dash.events import DashEventQueueManager
@@ -17,6 +17,12 @@ from strikepoint.dash.content import ContentManager
 from strikepoint.dash.calibrate import CalibrationDashUi
 
 logger = getLogger("strikepoint")
+
+
+class FrameInfoProvider:
+
+    def getFrameInfo(self):
+        raise NotImplementedError()
 
 
 class StrikePointDashApp:
@@ -29,9 +35,11 @@ class StrikePointDashApp:
         'CRITICAL': 'darkred',
     }
 
-    def __init__(self, producer: FrameProducer, msgQueue: Queue):
+    def __init__(self,
+                 frameInfoProvider: FrameInfoProvider,
+                 msgQueue: Queue):
         self.app = Dash(__name__, title='StrikePoint', serve_locally=True)
-        self.producer = producer
+        self.frameInfoProvider = frameInfoProvider
         self.contentManager = ContentManager(self.app)
         self.eventQueueManager = DashEventQueueManager(self.app)
         self.strikeDetectionEngine = StrikeDetectionEngine()
@@ -324,17 +332,19 @@ class StrikePointDashApp:
         while True:
             try:
                 frameSeq += 1
-                frameInfo = self.producer.getFrameInfo()
+                frameInfo = self.frameInfoProvider.getFrameInfo()
                 self.contentManager.registerVideoFrame(
                     'visual', frameInfo.rgbFrames['visual'])
                 self.contentManager.registerVideoFrame(
                     'thermal', frameInfo.rgbFrames['thermal'])
+
                 with self.frameWriterLock:
                     if self.frameWriter is not None:
                         self.frameWriter.writeFrameInfo(frameInfo)
                 while self.msgQueue.qsize() > 0:
                     rtn = self.msgQueue.get_nowait()
                     self.eventQueueManager.fireEvent('update-log-entries', rtn)
+
                 avgTemp = frameInfo.rawFrames['thermal'].mean()
                 if lastAvgTemp is not None:
                     self.strikeMetricsDf = pd.concat(
@@ -345,7 +355,6 @@ class StrikePointDashApp:
                              "tempAvg": avgTemp}])],
                         ignore_index=True)
                 lastAvgTemp = avgTemp
-                # print(f"Frame {frameSeq}: avg thermal temp = {avgTemp:.2f}F")
                 if frameSeq % 2 == 0:
                     self.eventQueueManager.fireEvent(
                         'update-strike-time-series-graph')

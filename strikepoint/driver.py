@@ -3,13 +3,12 @@ import os
 import ctypes.util
 import numpy as np
 
-from strikepoint.producer import FrameProvider
 from logging import DEBUG, INFO, WARNING, ERROR, CRITICAL
 from enum import IntEnum
 from time import time
 
 
-class SplibDriver(FrameProvider):
+class SplibDriver:
     """ctypes wrapper around SPLIB_* functions from the C driver.
     """
     class TemperatureUnit(IntEnum):
@@ -35,8 +34,8 @@ class SplibDriver(FrameProvider):
 
     allFnNameList = [
         "SPLIB_Shutdown", "SPLIB_Init", "SPLIB_LeptonGetFrame",
-        "SPLIB_LeptonDisable", "SPLIB_LeptonStartPolling", 
-        "SPLIB_GetNextLogEntry"]
+        "SPLIB_LeptonDisable", "SPLIB_LeptonStartPolling",
+        "SPLIB_GetNextLogEntry", "SPLIB_GetAudioStrikeEvents"]
 
     def __init__(self, logPath: str = None):
         libPath = SplibDriver.find_library_path()
@@ -60,6 +59,9 @@ class SplibDriver(FrameProvider):
         self.fnMap["SPLIB_GetNextLogEntry"].argtypes = [
             ctypes.c_void_p, ctypes.POINTER(ctypes.c_int), ctypes.c_char_p,
             ctypes.c_size_t, ctypes.POINTER(ctypes.c_int)]
+        self.fnMap["SPLIB_GetAudioStrikeEvents"].argtypes = [
+            ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint64),
+            ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]
 
         info = SplibDriver.SPLIB_DriverInfo()
         self.hndl = ctypes.c_void_p()
@@ -111,6 +113,17 @@ class SplibDriver(FrameProvider):
         if msgRemaining.value > 0:
             return (self._logLevelMap[level.value], buffer.value.decode('utf8'))
         return None
+
+    def getAudioStrikeEvents(self):
+        """Retrieve audio strike event timestamps (in ns).
+        """
+        bufferLen = 32
+        numEvents = ctypes.c_size_t(0)
+        eventsBuffer = (ctypes.c_uint64 * bufferLen)()
+        self._makeApiCall(
+            "SPLIB_GetAudioStrikeEvents", eventsBuffer,
+            ctypes.c_size_t(bufferLen), ctypes.byref(numEvents))
+        return [eventsBuffer[i] for i in range(numEvents.value)]
 
     def cameraDisable(self):
         """Disable the camera.

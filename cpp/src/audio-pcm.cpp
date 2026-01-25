@@ -1,13 +1,12 @@
 #include "audio-pcm.h"
 #include "error.h"
 
-#include <alsa/asoundlib.h>
-
 PcmAudioSource::PcmAudioSource(std::string device,
                                unsigned int sampleRateHz,
                                int channels,
                                int bufferSize) :
-    _pcm(nullptr)
+    _pcm(nullptr),
+    _sampleRate_Hz(sampleRateHz)
 {
     const char *dev = device.c_str();
     int err = 0;

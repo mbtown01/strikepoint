@@ -1,6 +1,6 @@
-#include <gtest/gtest.h>
-#include "audio.h"
 #include "audio-wav.h"
+#include "audio.h"
+#include <gtest/gtest.h>
 
 extern "C" {
 #include "driver.h"
@@ -9,7 +9,7 @@ extern "C" {
 TEST(DriverApi, InitNullArgs)
 {
     int rc = SPLIB_Init(NULL, NULL, SPLIB_TEMP_UNITS_FAHRENHEIT, NULL);
-    EXPECT_EQ(rc, -1);
+    EXPECT_EQ(rc, -2);
 }
 
 TEST(DriverApi, GetFrameNull)
@@ -77,26 +77,42 @@ TEST(DriverApi, RecoveryFramePollOnStartup)
     EXPECT_EQ(rc, 0);
 }
 
-TEST(AudioApi, DoesItWork)
+void
+testForStrikeEvents(std::string fileName, std::vector<uint64_t> expectedEventTimes)
 {
-    WavAudioSource source("../../dev/test.wav");
+    WavAudioSource source(fileName);
     AudioEngine::config config = {};
     AudioEngine::defaults(config);
     AudioEngine audio(source, config);
-    audio.start(&config);
-    while (!source.isEOF()) {
-        AudioEngine::event event;
-        int rc = audio.waitEvent(&event, 1000);
-        if (rc == 1) {
-            // Event received
-            EXPECT_GT(event.score, 0.0f);
-        }
+
+    while (!source.isEOF())
+        usleep(10000);
+
+    std::vector<AudioEngine::event> events;
+    audio.getEvents(events);
+    EXPECT_EQ(events.size(), expectedEventTimes.size());
+    for(int i=0; i<events.size(); i++) {
+        EXPECT_GE(events[i].t_ns, expectedEventTimes[i] - 50 * 1000 * 1000);
+        EXPECT_LE(events[i].t_ns, expectedEventTimes[i] + 50 * 1000 * 1000);
     }
-    audio.stop();
-    
-    // This is a placeholder test; actual audio tests would require
-    // audio hardware and are not implemented here.
-    EXPECT_TRUE(true);
+}
+
+TEST(AudioApi, RealData_01)
+{
+    uint64_t eventTimes[] = {
+        14463999774, 23466666300, 33685332807, 44650665969, 56426665785};
+    std::vector<uint64_t> expectedEventTimes(
+        std::begin(eventTimes), std::end(eventTimes));
+    testForStrikeEvents("../../../strikepoint-test-data/test-01.wav", expectedEventTimes);
+}
+
+TEST(AudioApi, RealData_02)
+{
+    uint64_t eventTimes[] = {
+        5077333333, 11520000000, 21888000000, 33962666666, 44416000000, 54869333333};
+    std::vector<uint64_t> expectedEventTimes(
+        std::begin(eventTimes), std::end(eventTimes));
+    testForStrikeEvents("../../../strikepoint-test-data/test-02.wav", expectedEventTimes);
 }
 
 int
