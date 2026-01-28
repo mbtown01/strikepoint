@@ -54,11 +54,12 @@ class DeviceBasedFrameInfoProvider(FrameInfoProvider):
     def getFrameInfo(self):
         frameInfo = FrameInfo(monotonic())
 
-        frame = self.splibDriver.getFrame()
-        while (entry := self.splibDriver.getNextLogEntry()) is not None:
-            level, msg = entry
+        frameWithMetadata = self.splibDriver.getFrameWithMetadata()
+        while self.splibDriver.logHasEntries():
+            level, msg = self.splibDriver.logGetNextEntry()
             logger.log(level, f"(libstrikepoint) {msg}")
 
+        frame = frameWithMetadata.pop("frame")
         frame = cv2.flip(frame, 0)
         frame = cv2.flip(frame, 1)
         frameInfo.rawFrames['thermal'] = frame
@@ -83,8 +84,12 @@ class DeviceBasedFrameInfoProvider(FrameInfoProvider):
                            interpolation=cv2.INTER_NEAREST)
         frameInfo.rgbFrames['visual'] = frame
 
-        frameInfo.metadata['audioStrikeDetected'] = \
-            len(self.splibDriver.getAudioStrikeEvents()) > 0
+        audioStrikeEvents = self.splibDriver.getAudioStrikeEvents()
+        frameInfo.metadata['leptonEventId'] = frameWithMetadata['eventId']
+        frameInfo.metadata['leptonTimestampNs'] = frameWithMetadata['timestamp_ns']
+        frameInfo.metadata['audioStrikeDetected'] = len(audioStrikeEvents) > 0
+        frameInfo.metadata['audioStrikeTimestampNs'] = \
+            max(audioStrikeEvents) if len(audioStrikeEvents) > 0 else None
 
         return frameInfo
 

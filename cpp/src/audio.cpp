@@ -4,6 +4,8 @@
 #include <cmath>
 #include <ctime>
 
+using namespace strikepoint;
+
 AudioEngine::AudioEngine(IAudioSource &source, AudioEngine::config &cfg) :
     _running(false),
     _source(source),
@@ -15,7 +17,7 @@ AudioEngine::AudioEngine(IAudioSource &source, AudioEngine::config &cfg) :
         LIQUID_IIRDES_HIGHPASS,
         LIQUID_IIRDES_SOS,
         4,
-        _cfg.cutoff_hz / (float) _source.sampleRate_Hz(),
+        _cfg.cutoff_hz / (float) _source.sample_rate_hz(),
         0.0f, // f0 unused for high-pass
         1.0f, // Ap (passband ripple) unused for Butterworth
         60.0f // As (stopband attenuation) unused for Butterworth
@@ -40,11 +42,11 @@ AudioEngine::~AudioEngine()
 void
 AudioEngine::defaults(AudioEngine::config &cfg)
 {
-    cfg.blockSize = 2048;
-    cfg.queueSize = 256;
+    cfg.block_size = 2048;
+    cfg.queue_size = 256;
     cfg.cutoff_hz = 15000.0f;
     cfg.refractory_s = 1.0f;
-    cfg.minThresh = 0.03f;
+    cfg.min_thresh = 0.03f;
 }
 
 void
@@ -52,7 +54,7 @@ AudioEngine::_captureLoop()
 {
     // BUFFER SETUP
     // frameSize = number of samples per processing block provided by the source.
-    const int frameSize = _cfg.blockSize;
+    const int frameSize = _cfg.block_size;
     std::vector<float> buf(frameSize), buf_hp(frameSize);
 
     // Detector state
@@ -66,7 +68,7 @@ AudioEngine::_captureLoop()
     // - apply high-pass filter to remove low-frequency content (room rumble, DC)
     // - compute energy/peak metrics on the high-passed signal
     // - update noise estimate and decide whether the block contains a strike
-    while (!_source.isEOF() && _running.load(std::memory_order_relaxed)) {
+    while (!_source.is_eof() && _running.load(std::memory_order_relaxed)) {
         // Read a block of samples (blocking or non-blocking depending on source)
         _source.read(&(buf[0]), frameSize);
 
@@ -97,23 +99,23 @@ AudioEngine::_captureLoop()
         // float peakiness = max / (rms + 1e-12f);
 
         // Timing: timestamp this block using the source's monotonic clock.
-        uint64_t t = _source.nowNs();
+        uint64_t t = _source.now_ns();
         double since_hit_s = (lastHit == 0) ? 999.0 : (double) (t - lastHit) / 1e9;
 
         // Decision rule:
         // - rms must exceed the dynamic threshold
         // - the waveform must be sufficiently peaky (reduces sustained noise false positives)
         // - respect the refractory period to avoid multiple detections for one strike
-        if (since_hit_s >= _cfg.refractory_s && rms > _cfg.minThresh) {
+        if (since_hit_s >= _cfg.refractory_s && rms > _cfg.min_thresh) {
             lastHit = t;
             e.t_ns = t;
             e.rms = rms;
             // e.peakiness = peakiness;
             // e.score = rms * peakiness; // composite score for ranking
-            e.eventId = ++eventId;
+            e.event_id = ++eventId;
 
             std::lock_guard<std::mutex> lk(_mtx);
-            if (_queue.size() >= _cfg.queueSize)
+            if (_queue.size() >= _cfg.queue_size)
                 _queue.pop(); // drop oldest
             _queue.push(e);
         }
@@ -128,4 +130,21 @@ AudioEngine::getEvents(std::vector<AudioEngine::event> &out)
         out.push_back(_queue.front());
         _queue.pop();
     }
+}
+
+AudioEngine::IAudioSource::IAudioSource() :
+    _sample_rate_hz(0)
+{
+}
+
+AudioEngine::IAudioSource::IAudioSource(unsigned int sample_rate_hz) :
+    _sample_rate_hz(sample_rate_hz)
+{
+}
+
+void
+AudioEngine::IAudioSource::_set_sample_rate_hz(
+    unsigned int sample_rate_hz) noexcept
+{
+    _sample_rate_hz = sample_rate_hz;
 }

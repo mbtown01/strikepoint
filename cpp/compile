@@ -24,34 +24,20 @@ die() {
 LEPTON_ROOT="$(readlink -f "$0")"
 LEPTON_ROOT="$(dirname "${LEPTON_ROOT}")"
 
-if [ $# -lt 1 ]; then
-    usage
-fi
-
-BUILD_CONFIG="$1"
-shift
-
-case "$BUILD_CONFIG" in
-    Debug|Release)
-        ;;
-    *)
-        die "Build config was '${BUILD_CONFIG}', must be 'Debug' or 'Release'"
-        ;;
-esac
-
-cd "${LEPTON_ROOT}"
-BUILD_DIR="./${BUILD_CONFIG}"
-mkdir -p "${BUILD_DIR}"
+BUILD_CONFIG="Debug"
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --clean)
-            echo "Cleaning build directory ${BUILD_DIR}"
-            rm -rf ${BUILD_DIR}
-            shift
-            ;;
         --help|-h)
             usage
+            ;;
+        Debug|debug)
+            BUILD_CONFIG="Debug"
+            shift
+            ;;
+        Release|release)
+            BUILD_CONFIG="Release"
+            shift
             ;;
         *)
             echo "Unknown option: $1"
@@ -60,6 +46,9 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+cd "${LEPTON_ROOT}"
+BUILD_DIR="./${BUILD_CONFIG}"
+mkdir -p "${BUILD_DIR}"
 
 cmake -B ${BUILD_CONFIG} -S . -DCMAKE_BUILD_TYPE=${BUILD_CONFIG} || \
     die "CMake configuration failed"

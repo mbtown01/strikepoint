@@ -4,6 +4,8 @@
 #include <sndfile.h>
 #include <string>
 
+namespace strikepoint {
+
 class WavAudioSource : public AudioEngine::IAudioSource {
 
   public:
@@ -12,15 +14,14 @@ class WavAudioSource : public AudioEngine::IAudioSource {
 
     void read(float *buffer, size_t frames) override;
 
-    uint64_t nowNs() override { return _currentTime_ns; }
+    uint64_t now_ns() override { return _now_ns; }
 
-    unsigned int sampleRate_Hz() override { return _sampleRate_Hz; }
-
-    bool isEOF() override { return _isEof; }
+    bool is_eof() override { return _is_eof; }
 
   private:
     SNDFILE *_file;
-    bool _isEof;
-    int _sampleRate_Hz;
-    uint64_t _currentTime_ns;
+    bool _is_eof;
+    uint64_t _now_ns;
 };
+
+} // namespace strikepoint

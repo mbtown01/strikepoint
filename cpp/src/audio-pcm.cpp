@@ -1,12 +1,14 @@
 #include "audio-pcm.h"
 #include "error.h"
 
+using namespace strikepoint;
+
 PcmAudioSource::PcmAudioSource(std::string device,
                                unsigned int sampleRateHz,
                                int channels,
                                int bufferSize) :
     _pcm(nullptr),
-    _sampleRate_Hz(sampleRateHz)
+    AudioEngine::IAudioSource(sampleRateHz)
 {
     const char *dev = device.c_str();
     int err = 0;
@@ -70,7 +72,7 @@ PcmAudioSource::read(float *buffer, size_t size)
 }
 
 uint64_t
-PcmAudioSource::nowNs()
+PcmAudioSource::now_ns()
 {
     timespec ts{};
     clock_gettime(CLOCK_MONOTONIC, &ts);

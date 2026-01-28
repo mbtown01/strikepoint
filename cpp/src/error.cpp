@@ -1,16 +1,18 @@
 #include "error.h"
 
+using namespace strikepoint;
+
 void
-strikepoint::bail_error::bail(const char *fileName,
+bail_error::bail(const char *file_name,
                               const int line,
                               const char *format, ...)
 {
-    char msgStr[4096];
+    char msg_str[4096];
     va_list args;
 
     va_start(args, format);
-    vsnprintf(msgStr, sizeof(msgStr), format, args);
+    vsnprintf(msg_str, sizeof(msg_str), format, args);
     va_end(args);
 
-    throw strikepoint::bail_error(std::string(msgStr), fileName, line);
+    throw bail_error(std::string(msg_str), file_name, line);
 }

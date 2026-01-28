@@ -6,6 +6,8 @@ extern "C" {
 #include "driver.h"
 }
 
+using namespace strikepoint;
+
 TEST(DriverApi, InitNullArgs)
 {
     int rc = SPLIB_Init(NULL, NULL, SPLIB_TEMP_UNITS_FAHRENHEIT, NULL);
@@ -14,9 +16,12 @@ TEST(DriverApi, InitNullArgs)
 
 TEST(DriverApi, GetFrameNull)
 {
-    float buf[1024];
-    // original test calls two-arg GetFrame(NULL, buf)
-    int rc = SPLIB_LeptonGetFrame(NULL, buf);
+    const size_t pixel_count = 10;
+    float buffer[pixel_count];
+    uint32_t eventId;
+    uint64_t timestamp_ns;
+    int rc = SPLIB_LeptonGetFrame(
+        NULL, buffer, pixel_count, &eventId, &timestamp_ns);
     EXPECT_EQ(rc, -1);
 }
 
@@ -46,8 +51,11 @@ TEST(DriverApi, SimpleFramePoll)
     rc = SPLIB_LeptonStartPolling(hndl);
     EXPECT_EQ(rc, 0);
 
-    float buffer[info.frameWidth * info.frameHeight];
-    rc = SPLIB_LeptonGetFrame(hndl, buffer);
+    const size_t pixel_count = info.frameWidth * info.frameHeight;
+    float buffer[pixel_count];
+    uint32_t event_id;
+    uint64_t timestamp_ns;
+    rc = SPLIB_LeptonGetFrame(hndl, buffer, pixel_count, &event_id, &timestamp_ns);
     EXPECT_EQ(rc, 0);
 
     rc = SPLIB_Shutdown(hndl);
@@ -69,8 +77,11 @@ TEST(DriverApi, RecoveryFramePollOnStartup)
     rc = SPLIB_LeptonStartPolling(hndl);
     EXPECT_EQ(rc, 0);
 
-    float buffer[info.frameWidth * info.frameHeight];
-    rc = SPLIB_LeptonGetFrame(hndl, buffer);
+    const size_t pixel_count = info.frameWidth * info.frameHeight;
+    float buffer[pixel_count];
+    uint32_t event_id;
+    uint64_t timestamp_ns;
+    rc = SPLIB_LeptonGetFrame(hndl, buffer, pixel_count, &event_id, &timestamp_ns);
     EXPECT_EQ(rc, 0);
 
     rc = SPLIB_Shutdown(hndl);
@@ -85,13 +96,13 @@ testForStrikeEvents(std::string fileName, std::vector<uint64_t> expectedEventTim
     AudioEngine::defaults(config);
     AudioEngine audio(source, config);
 
-    while (!source.isEOF())
+    while (!source.is_eof())
         usleep(10000);
 
     std::vector<AudioEngine::event> events;
     audio.getEvents(events);
     EXPECT_EQ(events.size(), expectedEventTimes.size());
-    for(int i=0; i<events.size(); i++) {
+    for (int i = 0; i < events.size(); i++) {
         EXPECT_GE(events[i].t_ns, expectedEventTimes[i] - 50 * 1000 * 1000);
         EXPECT_LE(events[i].t_ns, expectedEventTimes[i] + 50 * 1000 * 1000);
     }
@@ -99,19 +110,19 @@ testForStrikeEvents(std::string fileName, std::vector<uint64_t> expectedEventTim
 
 TEST(AudioApi, RealData_01)
 {
-    uint64_t eventTimes[] = {
+    uint64_t event_times[] = {
         14463999774, 23466666300, 33685332807, 44650665969, 56426665785};
     std::vector<uint64_t> expectedEventTimes(
-        std::begin(eventTimes), std::end(eventTimes));
+        std::begin(event_times), std::end(event_times));
     testForStrikeEvents("../../../strikepoint-test-data/test-01.wav", expectedEventTimes);
 }
 
 TEST(AudioApi, RealData_02)
 {
-    uint64_t eventTimes[] = {
+    uint64_t event_times[] = {
         5077333333, 11520000000, 21888000000, 33962666666, 44416000000, 54869333333};
     std::vector<uint64_t> expectedEventTimes(
-        std::begin(eventTimes), std::end(eventTimes));
+        std::begin(event_times), std::end(event_times));
     testForStrikeEvents("../../../strikepoint-test-data/test-02.wav", expectedEventTimes);
 }
 

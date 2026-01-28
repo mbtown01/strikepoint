@@ -1,5 +1,4 @@
-
-#include <pthread.h>
+#include <mutex>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -11,95 +10,89 @@
 static const char *LOG_LEVEL_MAP[] = {
     "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"};
 
-strikepoint::Logger::Logger(const char *logFilePath) :
-    _logFile(stdout)
+strikepoint::Logger::Logger(const char *log_file_path) :
+    _log_file(stdout)
 {
-    pthread_mutex_init(&_logMutex, NULL);
-
-    if (logFilePath == NULL)
-        _logFile = NULL;
-    else if (strncmp(logFilePath, "stdout", 6) == 0)
-        _logFile = stdout;
-    else if (strncmp(logFilePath, "stderr", 6) == 0)
-        _logFile = stderr;
+    if (log_file_path == NULL)
+        _log_file = NULL;
+    else if (strncmp(log_file_path, "stdout", 6) == 0)
+        _log_file = stdout;
+    else if (strncmp(log_file_path, "stderr", 6) == 0)
+        _log_file = stderr;
     else {
-        FILE *newLogFile = fopen(logFilePath, "w");
-        if (newLogFile == NULL)
+        FILE *new_log_file = fopen(log_file_path, "w");
+        if (new_log_file == NULL)
             throw std::runtime_error("Could not open log file");
-        _logFile = newLogFile;
+        _log_file = new_log_file;
     }
 }
 
 strikepoint::Logger::~Logger()
 {
-    pthread_mutex_destroy(&_logMutex);
-
-    if (_logFile != NULL && _logFile != stdout && _logFile != stderr)
-        fclose(_logFile);
+    if (_log_file != NULL && _log_file != stdout && _log_file != stderr)
+        fclose(_log_file);
 }
 
 void
-strikepoint::Logger::log(const char *fileName,
+strikepoint::Logger::log(const char *file_name,
                          const int line,
-                         const SPLIB_LogLevel logLevel,
+                         const SPLIB_LogLevel log_level,
                          const char *format, ...)
 {
-    time_t rawtime;
-    struct tm *timeinfo;
-    char timeStr[80], msgStr[4096];
+    time_t raw_time;
+    struct tm *time_info;
+    char time_str[80], msg_str[4096];
     va_list args;
 
-    time(&rawtime);
-    timeinfo = localtime(&rawtime);
-    strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M:%S", timeinfo);
+    time(&raw_time);
+    time_info = localtime(&raw_time);
+    strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", time_info);
 
     va_start(args, format);
-    vsnprintf(msgStr, sizeof(msgStr), format, args);
+    vsnprintf(msg_str, sizeof(msg_str), format, args);
     va_end(args);
 
-    pthread_mutex_lock(&_logMutex);
-    if (_logFile != NULL) {
-        fprintf(_logFile, "%s [%s] %s:%d - %s\n",
-                timeStr, LOG_LEVEL_MAP[logLevel], fileName, line, msgStr);
-        fflush(_logFile);
+    std::lock_guard<std::mutex> lk(_log_mutex);
+    if (_log_file != NULL) {
+        fprintf(_log_file, "%s [%s] %s:%d - %s\n",
+                time_str, LOG_LEVEL_MAP[log_level], file_name, line, msg_str);
+        fflush(_log_file);
     } else {
         LogEntry entry;
-        memcpy(&entry.timestamp, &rawtime, sizeof(time_t));
-        entry.message = std::string(msgStr);
-        entry.level = logLevel;
-        _logBuffer.push(entry);
+        memcpy(&entry.timestamp, &raw_time, sizeof(time_t));
+        entry.message = std::string(msg_str);
+        entry.level = log_level;
+        _log_buffer.push(entry);
     }
-    pthread_mutex_unlock(&_logMutex);
 }
 
 int
-strikepoint::Logger::getMessagesRemaining()
+strikepoint::Logger::getEntriesRemaining()
 {
-    pthread_mutex_lock(&_logMutex);
-    int msgCount = _logBuffer.size();
-    pthread_mutex_unlock(&_logMutex);
+    std::lock_guard<std::mutex> lk(_log_mutex);
+    int msgCount = _log_buffer.size();
     return msgCount;
 }
 
 void
-strikepoint::Logger::getNextLogEntry(
-    int *logLevel, char *buffer, size_t bufferLen)
+strikepoint::Logger::getNextEntry(
+    int *log_level, char *buffer, size_t buffer_size)
 {
-    if (logLevel == NULL)
+    if (log_level == NULL)
         BAIL("level pointer is NULL");
     if (buffer == NULL)
         BAIL("buffer pointer is NULL");
-    if (bufferLen == 0)
+    if (buffer_size == 0)
         BAIL("bufferLen is zero");
 
-    pthread_mutex_lock(&_logMutex);
-    if (_logBuffer.empty()) {
+    std::lock_guard<std::mutex> lk(_log_mutex);
+    if (_log_buffer.empty()) {
+        *log_level = SPLIB_LOG_LEVEL_DEBUG;
         buffer[0] = '\0';
     } else {
-        *logLevel = _logBuffer.front().level;
-        strncpy(buffer, _logBuffer.front().message.c_str(), bufferLen - 1);
-        buffer[bufferLen - 1] = '\0';
-        _logBuffer.pop();
+        *log_level = _log_buffer.front().level;
+        strncpy(buffer, _log_buffer.front().message.c_str(), buffer_size - 1);
+        buffer[buffer_size - 1] = '\0';
+        _log_buffer.pop();
     }
-    pthread_mutex_unlock(&_logMutex);
 }

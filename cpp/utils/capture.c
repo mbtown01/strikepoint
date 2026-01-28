@@ -103,20 +103,24 @@ main(int argc, char *argv[])
     SPLIB_LogLevel level;
     char logBuffer[4096];
     int msgRemaining = 0;
+    int logHasEntries = 0;
+    uint32_t eventId;
+    uint64_t timestamp_ns;
     static const char *LOG_LEVEL_MAP[] = {
         "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"};
 
     CRC16 crcOld = 0;
     for (int i = 0; i < frames; i++) {
-        do {
-            SPLIB_GetNextLogEntry(
-                hndl, &level, logBuffer, sizeof(logBuffer), &msgRemaining);
-            if (msgRemaining >= 0)
-                printf("LOG [%s]: %s\n", LOG_LEVEL_MAP[level], logBuffer);
-        } while (msgRemaining > 0);
+        SPLIB_LogHasEntries(hndl, &logHasEntries);
+        while (logHasEntries) {
+            SPLIB_LogGetNextEntry(
+                hndl, &level, logBuffer, sizeof(logBuffer));
+            printf("LOG [%s]: %s\n", LOG_LEVEL_MAP[level], logBuffer);
+            SPLIB_LogHasEntries(hndl, &logHasEntries);
+        }
 
         double start = get_time_sec();
-        if (0 != SPLIB_LeptonGetFrame(hndl, buffer)) {
+        if (0 != SPLIB_LeptonGetFrame(hndl, buffer, pixelCount, &eventId, &timestamp_ns)) {
             fprintf(stderr, "Error capturing frame %d\n", i);
             break;
         }
@@ -146,12 +150,13 @@ main(int argc, char *argv[])
             usleep(delay * 1e6);
     }
 
-    do {
-        SPLIB_GetNextLogEntry(
-            hndl, &level, logBuffer, sizeof(logBuffer), &msgRemaining);
-        if (msgRemaining >= 0)
-            printf("FINAL [%s]: %s\n", LOG_LEVEL_MAP[level], logBuffer);
-    } while (msgRemaining > 0);
+    SPLIB_LogHasEntries(hndl, &logHasEntries);
+    while (logHasEntries) {
+        SPLIB_LogGetNextEntry(
+            hndl, &level, logBuffer, sizeof(logBuffer));
+        printf("FINAL [%s]: %s\n", LOG_LEVEL_MAP[level], logBuffer);
+        SPLIB_LogHasEntries(hndl, &logHasEntries);
+    }
 
     close(fd);
     printf("Done capturing frames, calling shutdown\n");

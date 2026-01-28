@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+namespace strikepoint {
+
 class PcmAudioSource : public AudioEngine::IAudioSource {
 
   public:
@@ -16,12 +18,11 @@ class PcmAudioSource : public AudioEngine::IAudioSource {
 
     void read(float *buffer, size_t frames) override;
 
-    unsigned int sampleRate_Hz() override { return _sampleRate_Hz; }
-
-    uint64_t nowNs() override;
+    uint64_t now_ns() override;
 
   private:
     snd_pcm_t *_pcm;
-    unsigned int _sampleRate_Hz;
     std::vector<int16_t> _buffer;
 };
+
+} // namespace strikepoint

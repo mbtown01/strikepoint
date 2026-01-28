@@ -35,7 +35,8 @@ class SplibDriver:
     allFnNameList = [
         "SPLIB_Shutdown", "SPLIB_Init", "SPLIB_LeptonGetFrame",
         "SPLIB_LeptonDisable", "SPLIB_LeptonStartPolling",
-        "SPLIB_GetNextLogEntry", "SPLIB_GetAudioStrikeEvents"]
+        "SPLIB_LogGetNextEntry", "SPLIB_LogHasEntries",
+        "SPLIB_GetAudioStrikeEvents"]
 
     def __init__(self, logPath: str = None):
         libPath = SplibDriver.find_library_path()
@@ -55,10 +56,14 @@ class SplibDriver:
             ctypes.c_int,
             ctypes.c_char_p]
         self.fnMap["SPLIB_LeptonGetFrame"].argtypes = [
-            ctypes.c_void_p, ctypes.POINTER(ctypes.c_float)]
-        self.fnMap["SPLIB_GetNextLogEntry"].argtypes = [
+            ctypes.c_void_p, ctypes.POINTER(ctypes.c_float),
+            ctypes.c_size_t, ctypes.POINTER(ctypes.c_uint32),
+            ctypes.POINTER(ctypes.c_uint64)]
+        self.fnMap["SPLIB_LogGetNextEntry"].argtypes = [
             ctypes.c_void_p, ctypes.POINTER(ctypes.c_int), ctypes.c_char_p,
-            ctypes.c_size_t, ctypes.POINTER(ctypes.c_int)]
+            ctypes.c_size_t]
+        self.fnMap["SPLIB_LogHasEntries"].argtypes = [
+            ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)]
         self.fnMap["SPLIB_GetAudioStrikeEvents"].argtypes = [
             ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint64),
             ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]
@@ -88,31 +93,44 @@ class SplibDriver:
         """
         self._makeApiCall("SPLIB_LeptonStartPolling")
 
-    def getFrame(self):
+    def getFrameWithMetadata(self):
         """Get a single frame from the driver."""
         buf = np.empty(self.frameWidth * self.frameHeight, dtype=np.float32)
         buf_ptr = buf.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
-        self._makeApiCall("SPLIB_LeptonGetFrame", buf_ptr)
-        return buf.reshape((self.frameHeight, self.frameWidth))
+        eventId = ctypes.c_uint32()
+        timestamp_ns = ctypes.c_uint64()
+        self._makeApiCall("SPLIB_LeptonGetFrame", buf_ptr,
+                          ctypes.c_size_t(buf.nbytes), ctypes.byref(eventId),
+                          ctypes.byref(timestamp_ns))
+        return {
+            "frame": buf.reshape((self.frameHeight, self.frameWidth)),
+            "eventId": eventId.value,
+            "timestamp_ns": timestamp_ns.value
+        }
 
     def shutdown(self):
         """Shutdown the driver.
         """
         self._makeApiCall("SPLIB_Shutdown")
 
-    def getNextLogEntry(self):
+    def logHasEntries(self):
+        """Check if there are log entries available.
+        """
+        hasEntries = ctypes.c_int()
+        self._makeApiCall(
+            "SPLIB_LogHasEntries", ctypes.byref(hasEntries))
+        return hasEntries.value > 0
+
+    def logGetNextEntry(self):
         """Get the next log entry from the driver.
         """
         level = ctypes.c_int()
-        msgRemaining = ctypes.c_int()
         bufferLen = 1024
         buffer = ctypes.create_string_buffer(bufferLen)
         self._makeApiCall(
-            "SPLIB_GetNextLogEntry", ctypes.byref(level), buffer,
-            ctypes.c_size_t(bufferLen), ctypes.byref(msgRemaining))
-        if msgRemaining.value > 0:
-            return (self._logLevelMap[level.value], buffer.value.decode('utf8'))
-        return None
+            "SPLIB_LogGetNextEntry", ctypes.byref(level), buffer,
+            ctypes.c_size_t(bufferLen))
+        return (self._logLevelMap[level.value], buffer.value.decode('utf8'))
 
     def getAudioStrikeEvents(self):
         """Retrieve audio strike event timestamps (in ns).

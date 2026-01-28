@@ -1,16 +1,10 @@
-#include <cstring>
-#include <errno.h>
+#include <chrono>
+#include <ctime>
 #include <fcntl.h>
 #include <linux/spi/spidev.h>
 #include <linux/types.h>
 #include <memory.h>
-#include <pthread.h>
-#include <stdarg.h>
 #include <stdexcept>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string>
 #include <sys/ioctl.h>
 #include <time.h>
 #include <unistd.h>
@@ -21,15 +15,9 @@
 #include "LEPTON_RAD.h"
 #include "LEPTON_SDK.h"
 #include "LEPTON_SYS.h"
-#include "LEPTON_Types.h"
-#include "LEPTON_VID.h"
 #include "crc16.h"
 #include "error.h"
 #include "lepton.h"
-
-#include <stdexcept>
-#include <string>
-#include <utility>
 
 #define FRAME_WIDTH 80
 #define FRAME_HEIGHT 60
@@ -60,22 +48,24 @@
             BAIL("'%s' returned %d", #cmd, rtn); \
     } while (0)
 
+using namespace strikepoint;
+
 /*********************************************************************
  * LeptonDriver - constructor for the Lepton driver
  *********************************************************************/
-strikepoint::LeptonDriver::LeptonDriver(strikepoint::Logger &logger,
-                                        SPLIB_TemperatureUnit tempUnit,
-                                        const char *logFilePath) :
+LeptonDriver::LeptonDriver(Logger &logger,
+                           SPLIB_TemperatureUnit temp_unit,
+                           const char *log_file_path) :
     _logger(logger),
-    _spiFd(0),
-    _tempUnit(tempUnit),
-    _hasFrame(false),
-    _shutdownRequested(false),
+    _spi_fd(0),
+    _temp_unit(temp_unit),
+    _has_frame(false),
+    _shutdown_requested(false),
     _isRunning(false)
 {
-    BAIL_ON_FAILED_ERRNO(pthread_mutex_init(&_frameMutex, NULL));
-    BAIL_ON_FAILED_ERRNO(pthread_cond_init(&_frameCond, NULL));
-    _frameBuffer.resize(FRAME_WIDTH * FRAME_HEIGHT);
+
+    _frame_info.event_id = 0;
+    _frame_info.buffer.resize(FRAME_WIDTH * FRAME_HEIGHT);
 
 #ifdef DEBUG
     LOG_INFO(_logger, "Lepton driver v%d.%d DEBUG initializing...",
@@ -92,32 +82,32 @@ strikepoint::LeptonDriver::LeptonDriver(strikepoint::Logger &logger,
 
     LOG_INFO(_logger, "Configuring /def/spidev0.0: mode=%d, bitsPerWord=%d, speed=%d Hz",
              spiMode, spiBitsPerWord, spiSpeed);
-    _spiFd = open("/dev/spidev0.0", O_RDWR);
-    if (_spiFd < 0)
+    _spi_fd = open("/dev/spidev0.0", O_RDWR);
+    if (_spi_fd < 0)
         BAIL("Could not open SPI device");
     BAIL_ON_FAILED_ERRNO(
-        ioctl(_spiFd, SPI_IOC_WR_MODE, &spiMode));
+        ioctl(_spi_fd, SPI_IOC_WR_MODE, &spiMode));
     BAIL_ON_FAILED_ERRNO(
-        ioctl(_spiFd, SPI_IOC_RD_MODE, &spiMode));
+        ioctl(_spi_fd, SPI_IOC_RD_MODE, &spiMode));
     BAIL_ON_FAILED_ERRNO(
-        ioctl(_spiFd, SPI_IOC_WR_BITS_PER_WORD, &spiBitsPerWord));
+        ioctl(_spi_fd, SPI_IOC_WR_BITS_PER_WORD, &spiBitsPerWord));
     BAIL_ON_FAILED_ERRNO(
-        ioctl(_spiFd, SPI_IOC_RD_BITS_PER_WORD, &spiBitsPerWord));
+        ioctl(_spi_fd, SPI_IOC_RD_BITS_PER_WORD, &spiBitsPerWord));
     BAIL_ON_FAILED_ERRNO(
-        ioctl(_spiFd, SPI_IOC_WR_MAX_SPEED_HZ, &spiSpeed));
+        ioctl(_spi_fd, SPI_IOC_WR_MAX_SPEED_HZ, &spiSpeed));
     BAIL_ON_FAILED_ERRNO(
-        ioctl(_spiFd, SPI_IOC_RD_MAX_SPEED_HZ, &spiSpeed));
+        ioctl(_spi_fd, SPI_IOC_RD_MAX_SPEED_HZ, &spiSpeed));
 
     // Initialize and open the camera port (example values)
     LOG_INFO(_logger, "Configuring camera port");
-    _portDesc.portType = LEP_CCI_TWI;
-    _portDesc.portID = 99;
-    _portDesc.deviceAddress = 0x2A;               // Example I2C address
-    _portDesc.portBaudRate = (LEP_UINT16) 400000; // 400 kHz
-    BAIL_ON_FAILED_LEP(LEP_OpenPort(1, LEP_CCI_TWI, 400, &_portDesc));
+    _port_desc.portType = LEP_CCI_TWI;
+    _port_desc.portID = 99;
+    _port_desc.deviceAddress = 0x2A;               // Example I2C address
+    _port_desc.portBaudRate = (LEP_UINT16) 400000; // 400 kHz
+    BAIL_ON_FAILED_LEP(LEP_OpenPort(1, LEP_CCI_TWI, 400, &_port_desc));
 
-    BAIL_ON_FAILED_LEP(LEP_SetAgcEnableState(&_portDesc, LEP_AGC_DISABLE));
-    BAIL_ON_FAILED_LEP(LEP_SetRadEnableState(&_portDesc, LEP_RAD_ENABLE));
+    BAIL_ON_FAILED_LEP(LEP_SetAgcEnableState(&_port_desc, LEP_AGC_DISABLE));
+    BAIL_ON_FAILED_LEP(LEP_SetRadEnableState(&_port_desc, LEP_RAD_ENABLE));
 
     LEP_SYS_FFC_SHUTTER_MODE_OBJ_T ffcMode;
     ffcMode.shutterMode = LEP_SYS_FFC_SHUTTER_MODE_MANUAL;
@@ -129,69 +119,73 @@ strikepoint::LeptonDriver::LeptonDriver(strikepoint::Logger &logger,
     ffcMode.explicitCmdToOpen = false;
     ffcMode.desiredFfcTempDelta = 0;
     ffcMode.imminentDelay = 0;
-    BAIL_ON_FAILED_LEP(LEP_SetSysFfcShutterModeObj(&_portDesc, ffcMode));
+    BAIL_ON_FAILED_LEP(LEP_SetSysFfcShutterModeObj(&_port_desc, ffcMode));
     usleep(200000); // Wait for a second to allow FFC to complete
 
-    BAIL_ON_FAILED_LEP(LEP_RunSysFFCNormalization(&_portDesc));
+    BAIL_ON_FAILED_LEP(LEP_RunSysFFCNormalization(&_port_desc));
     BAIL_ON_FAILED_LEP(
-        LEP_SetOemVideoOutputEnable(&_portDesc, LEP_VIDEO_OUTPUT_ENABLE));
+        LEP_SetOemVideoOutputEnable(&_port_desc, LEP_VIDEO_OUTPUT_ENABLE));
 
     // Show status some known interesting settings
     LEP_SYS_FLIR_SERIAL_NUMBER_T serialNumber;
-    BAIL_ON_FAILED_LEP(LEP_GetSysFlirSerialNumber(&_portDesc, &serialNumber));
+    BAIL_ON_FAILED_LEP(LEP_GetSysFlirSerialNumber(&_port_desc, &serialNumber));
     LOG_INFO(_logger, "STARTUP Camera Serial Number: %llu", (unsigned long long) serialNumber);
 
     LEP_SYS_UPTIME_NUMBER_T upTime;
-    BAIL_ON_FAILED_LEP(LEP_GetSysCameraUpTime(&_portDesc, &upTime));
+    BAIL_ON_FAILED_LEP(LEP_GetSysCameraUpTime(&_port_desc, &upTime));
     LOG_INFO(_logger, "STARTUP Camera Uptime: %u seconds", (unsigned int) (upTime));
 
     LEP_SYS_AUX_TEMPERATURE_CELCIUS_T auxTemp;
-    LEP_GetSysAuxTemperatureCelcius(&_portDesc, &auxTemp);
+    LEP_GetSysAuxTemperatureCelcius(&_port_desc, &auxTemp);
     LOG_INFO(_logger, "STARTUP aux temperature: %.2f F", auxTemp * 9.0f / 5.0f + 32.0f);
 
     LEP_SYS_FPA_TEMPERATURE_CELCIUS_T fpaTemp;
-    BAIL_ON_FAILED_LEP(LEP_GetSysFpaTemperatureCelcius(&_portDesc, &fpaTemp));
+    BAIL_ON_FAILED_LEP(LEP_GetSysFpaTemperatureCelcius(&_port_desc, &fpaTemp));
     LOG_INFO(_logger, "STARTUP FPA Temperature: %.2f F", fpaTemp * 9.0f / 5.0f + 32.0f);
 
     LEP_RAD_ENABLE_E radState;
-    LEP_GetRadEnableState(&_portDesc, &radState);
+    LEP_GetRadEnableState(&_port_desc, &radState);
     LOG_INFO(_logger, "STARTUP Radiometry enabled: %d", radState);
 
     LEP_AGC_ENABLE_E agcState;
-    LEP_GetAgcEnableState(&_portDesc, &agcState);
+    LEP_GetAgcEnableState(&_port_desc, &agcState);
     LOG_INFO(_logger, "STARTUP AGC enabled: %d", agcState);
 
-    BAIL_ON_FAILED_LEP(LEP_GetSysStatus(&_portDesc, &statusDesc));
+    BAIL_ON_FAILED_LEP(LEP_GetSysStatus(&_port_desc, &statusDesc));
     LOG_INFO(_logger, "STARTUP Camera status: %d", statusDesc.camStatus);
 }
 
 /*********************************************************************
- * LeptonDriver - constructor for the Lepton driver
+ * LeptonDriver - destructor for the Lepton driver
  *********************************************************************/
-strikepoint::LeptonDriver::~LeptonDriver()
+LeptonDriver::~LeptonDriver()
 {
-    BAIL_ON_FAILED_ERRNO(pthread_mutex_destroy(&_frameMutex));
-    BAIL_ON_FAILED_ERRNO(pthread_cond_destroy(&_frameCond));
-
-    BAIL_ON_FAILED_ERRNO(close(_spiFd));
-    BAIL_ON_FAILED_LEP(LEP_ClosePort(&_portDesc));
+    BAIL_ON_FAILED_ERRNO(close(_spi_fd));
+    BAIL_ON_FAILED_LEP(LEP_ClosePort(&_port_desc));
 }
 
 /*********************************************************************
  * shutdown - shutdown the Lepton driver and camera
  *********************************************************************/
 void
-strikepoint::LeptonDriver::shutdown()
+LeptonDriver::shutdown()
 {
     LOG_DEBUG(_logger, "Driver shutdown requested, waiting for capture thread");
-    void *rtnval = NULL;
-    _shutdownRequested = true;
-    BAIL_ON_FAILED_ERRNO(pthread_join(_thread, &rtnval));
+
+    _shutdown_requested = true;
+
+    // wake any waiters (notify all)
+    {
+        std::lock_guard<std::mutex> lk(_frame_mutex);
+        // nothing else to do inside lock; lock/unlock establishes happens-before
+    }
+    _frame_cond.notify_all();
+
+    if (_thread.joinable())
+        _thread.join();
 
     if (_isRunning)
         LOG_ERROR(_logger, "shutdown() called but session is still running");
-    if (rtnval != NULL)
-        LOG_ERROR(_logger, "SPI polling thread returned with errors");
 
     LOG_DEBUG(_logger, "Driver shutdown complete");
 }
@@ -200,7 +194,7 @@ strikepoint::LeptonDriver::shutdown()
  * getDriverInfo - retrieve information about the driver
  *********************************************************************/
 void
-strikepoint::LeptonDriver::getDriverInfo(SPLIB_DriverInfo *info)
+LeptonDriver::getDriverInfo(SPLIB_DriverInfo *info)
 {
     if (info == NULL)
         throw std::invalid_argument("info pointer is NULL");
@@ -213,19 +207,22 @@ strikepoint::LeptonDriver::getDriverInfo(SPLIB_DriverInfo *info)
 
 /*********************************************************************
  * startPolling - start the SPI polling thread
+ *
+ * Uses std::thread instead of pthread_create.
  *********************************************************************/
 void
-strikepoint::LeptonDriver::startPolling()
+LeptonDriver::startPolling()
 {
     if (_isRunning)
         BAIL("Attempt to start already running polling thread");
 
     // Kickoff the driver thread
     LOG_INFO(_logger, "Starting frame capture thread");
-    BAIL_ON_FAILED_ERRNO(pthread_create(
-        &_thread, NULL, _spiPollingThreadMain, (void *) this));
 
-    // Give the pthread 5 seconds to start up
+    // start std::thread which calls the static wrapper that handles exceptions
+    _thread = std::thread(&LeptonDriver::_spiPollingThreadMain, this);
+
+    // Give the thread 5 seconds to start up (same behavior as before)
     for (int i = 0; i < 5000 && !_isRunning; i++)
         usleep(1000);
     if (!_isRunning)
@@ -236,23 +233,23 @@ strikepoint::LeptonDriver::startPolling()
  * cameraDisable - disable the camera
  *********************************************************************/
 void
-strikepoint::LeptonDriver::cameraDisable()
+LeptonDriver::cameraDisable()
 {
     LOG_DEBUG(_logger, "SPLIB_LeptonDisable() START");
     LEP_STATUS_T statusDesc;
     LEP_RESULT rtn;
 
-    BAIL_ON_FAILED_LEP(LEP_GetSysStatus(&_portDesc, &statusDesc));
+    BAIL_ON_FAILED_LEP(LEP_GetSysStatus(&_port_desc, &statusDesc));
     LOG_DEBUG(_logger, "Camera status before disable: %d", statusDesc.camStatus);
 
     do {
-        rtn = LEP_RunOemPowerDown(&_portDesc);
+        rtn = LEP_RunOemPowerDown(&_port_desc);
         LOG_DEBUG(_logger, "Power down command sent, rtn=%d", rtn);
         usleep(250000);
     } while (rtn != LEP_OK);
 
     do {
-        rtn = LEP_GetSysStatus(&_portDesc, &statusDesc);
+        rtn = LEP_GetSysStatus(&_port_desc, &statusDesc);
         LOG_DEBUG(_logger, "Camera status test disable: %d, rtn=%d",
                   statusDesc.camStatus, rtn);
         usleep(250000);
@@ -265,17 +262,17 @@ strikepoint::LeptonDriver::cameraDisable()
  * cameraEnable - enable the camera
  *********************************************************************/
 void
-strikepoint::LeptonDriver::cameraEnable()
+LeptonDriver::cameraEnable()
 {
     LOG_DEBUG(_logger, "SPLIB_LeptonEnable() START");
     LEP_STATUS_T statusDesc;
     LEP_RESULT rtn;
 
-    BAIL_ON_FAILED_LEP(LEP_GetSysStatus(&_portDesc, &statusDesc));
+    BAIL_ON_FAILED_LEP(LEP_GetSysStatus(&_port_desc, &statusDesc));
     LOG_DEBUG(_logger, "Camera status before enable: %d", statusDesc.camStatus);
 
     do {
-        rtn = LEP_RunOemPowerOn(&_portDesc);
+        rtn = LEP_RunOemPowerOn(&_port_desc);
         LOG_DEBUG(_logger, "Power on command sent, rtn=%d", rtn);
         usleep(250000);
     } while (rtn != LEP_OK);
@@ -283,22 +280,22 @@ strikepoint::LeptonDriver::cameraEnable()
     usleep(1000000);
 
     do {
-        rtn = LEP_GetSysStatus(&_portDesc, &statusDesc);
+        rtn = LEP_GetSysStatus(&_port_desc, &statusDesc);
         LOG_DEBUG(_logger, "Camera status test disable: %d, rtn=%d",
                   statusDesc.camStatus, rtn);
         usleep(250000);
     } while (rtn != LEP_OK || statusDesc.camStatus != LEP_SYSTEM_READY);
 
-    BAIL_ON_FAILED_LEP(LEP_RunSysFFCNormalization(&_portDesc));
+    BAIL_ON_FAILED_LEP(LEP_RunSysFFCNormalization(&_port_desc));
     BAIL_ON_FAILED_LEP(
-        LEP_SetOemVideoOutputEnable(&_portDesc, LEP_VIDEO_OUTPUT_ENABLE));
+        LEP_SetOemVideoOutputEnable(&_port_desc, LEP_VIDEO_OUTPUT_ENABLE));
 
-    BAIL_ON_FAILED_LEP(LEP_GetSysStatus(&_portDesc, &statusDesc));
+    BAIL_ON_FAILED_LEP(LEP_GetSysStatus(&_port_desc, &statusDesc));
     LOG_DEBUG(_logger, "STARTUP Camera status: %d", statusDesc.camStatus);
 
     while (statusDesc.camStatus != LEP_SYSTEM_FLAT_FIELD_IN_PROCESS) {
         usleep(250000);
-        BAIL_ON_FAILED_LEP(LEP_GetSysStatus(&_portDesc, &statusDesc));
+        BAIL_ON_FAILED_LEP(LEP_GetSysStatus(&_port_desc, &statusDesc));
         LOG_DEBUG(_logger, "Camera status waiting for FFC: %d", statusDesc.camStatus);
     }
 
@@ -312,20 +309,24 @@ strikepoint::LeptonDriver::cameraEnable()
  * will block until a new frame is available from the camera.
  *********************************************************************/
 void
-strikepoint::LeptonDriver::getFrame(float *frameBuffer)
+LeptonDriver::getFrame(LeptonDriver::frameInfo &frame_info)
 {
     if (!_isRunning)
         BAIL("Frame requested but SPI polling thread not running");
-    if (_shutdownRequested)
+    if (_shutdown_requested)
         BAIL("SDK is shutting down");
 
-    pthread_mutex_lock(&_frameMutex);
-    pthread_cond_wait(&_frameCond, &_frameMutex);
-    if (_hasFrame)
-        memcpy(frameBuffer, &(_frameBuffer[0]),
-               sizeof(float) * FRAME_HEIGHT * FRAME_WIDTH);
-    _hasFrame = false;
-    pthread_mutex_unlock(&_frameMutex);
+    std::unique_lock<std::mutex> lk(_frame_mutex);
+    _frame_cond.wait(lk, [this] { return _has_frame.load() || _shutdown_requested.load(); });
+
+    if (_has_frame) {
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        frame_info.t_ns = _frame_info.t_ns;
+        frame_info.event_id = _frame_info.event_id;
+        frame_info.buffer = _frame_info.buffer;
+    }
+    _has_frame.store(false);
 }
 
 /*********************************************************************
@@ -347,19 +348,18 @@ _safeRead(int fd, void *buf, size_t len)
 }
 
 /*********************************************************************
- * _spiPollingThreadMain - pthread entry point
+ * _spiPollingThreadMain - thread entry point wrapper
  *********************************************************************/
-void *
-strikepoint::LeptonDriver::_spiPollingThreadMain(void *arg)
+void
+LeptonDriver::_spiPollingThreadMain(LeptonDriver *driver)
 {
-    LeptonDriver *driver = static_cast<LeptonDriver *>(arg);
     bool threwException = true;
 
     try {
         driver->_isRunning = true;
         driver->_driverMain();
         threwException = false;
-    } catch (const strikepoint::bail_error &e) {
+    } catch (const bail_error &e) {
         driver->_logger.log(
             e.file().c_str(), e.line(), SPLIB_LOG_LEVEL_ERROR, e.what());
     } catch (const std::exception &e) {
@@ -370,100 +370,93 @@ strikepoint::LeptonDriver::_spiPollingThreadMain(void *arg)
     driver->_isRunning = false;
 
     if (threwException) {
-        pthread_mutex_lock(&driver->_frameMutex);
-        driver->_hasFrame = false;
-        pthread_cond_signal(&driver->_frameCond);
-        pthread_mutex_unlock(&driver->_frameMutex);
-        return (void *) -1;
+        std::lock_guard<std::mutex> lk(driver->_frame_mutex);
+        driver->_has_frame = false;
+        // notify any waiter that thread failed
+        driver->_frame_cond.notify_all();
     }
-
-    return (void *) 0;
 }
 
 /*********************************************************************
  * _driverMain - Driver logic main loop
  *********************************************************************/
 void
-strikepoint::LeptonDriver::_driverMain()
+LeptonDriver::_driverMain()
 {
     uint8_t buff[PACKETS_PER_FRAME][PACKET_SIZE];
-    const int maxFailedAttempts = 30;
-    const int pixelsPerFrame = FRAME_WIDTH * FRAME_HEIGHT;
-    int failedAttempsRemaining = maxFailedAttempts;
-    int matchingCrcCount = 0;
-    ssize_t bytesRead;
-    CRC16 lastCrc = 0;
+    const int pixel_count = FRAME_WIDTH * FRAME_HEIGHT;
+    int matching_crc_count = 0;
+    CRC16 last_crc = 0;
 
-    while (_shutdownRequested == false && failedAttempsRemaining > 0) {
+    while (_shutdown_requested == false) {
         // Read from SPI until we see the start of a frame
         int tries = 100;
-        _safeRead(_spiFd, buff[0], PACKET_SIZE);
+        _safeRead(_spi_fd, buff[0], PACKET_SIZE);
         while ((buff[0][0] & 0x0F) != 0 && buff[0][1] != 0 && tries-- > 0) {
             usleep(10000);
-            _safeRead(_spiFd, buff[0], PACKET_SIZE);
+            _safeRead(_spi_fd, buff[0], PACKET_SIZE);
         }
         if (tries == 0)
             continue;
 
         // After seeing the start of a frame, read the rest of the packets
-        int goodPackets = 1;
-        for (int p = 1; p < PACKETS_PER_FRAME; p++, goodPackets++) {
-            _safeRead(_spiFd, buff[p], PACKET_SIZE);
+        int good_packets = 1;
+        for (int p = 1; p < PACKETS_PER_FRAME; p++, good_packets++) {
+            _safeRead(_spi_fd, buff[p], PACKET_SIZE);
             if ((buff[p][0] & 0x0F) != 0 || buff[p][1] != p)
                 break;
         }
 
         // If we didn't see all the packetes in the frame, reboot the camera
-        if (goodPackets != PACKETS_PER_FRAME) {
+        if (good_packets != PACKETS_PER_FRAME) {
             LOG_WARNING(_logger, "Bad frame received (%d/%d), rebooting camera",
-                        goodPackets, PACKETS_PER_FRAME);
+                        good_packets, PACKETS_PER_FRAME);
             cameraDisable();
             cameraEnable();
-            failedAttempsRemaining--;
             continue;
         }
 
         // Updated the shared frame buffer and signal any waiters
-        float localBuffer[pixelsPerFrame];
-        for (int i = 0; i < pixelsPerFrame; i++) {
+        float local_buffer[pixel_count];
+        for (int i = 0; i < pixel_count; i++) {
             int r = i / FRAME_WIDTH, c = i % FRAME_WIDTH;
             uint16_t v = (buff[r][4 + 2 * c] << 8) + buff[r][4 + 2 * c + 1];
             float k = (float) v * 0.01f;
-            if (_tempUnit == SPLIB_TEMP_UNITS_CELCIUS)
+            if (_temp_unit == SPLIB_TEMP_UNITS_CELCIUS)
                 k = k - 273.15f;
-            else if (_tempUnit == SPLIB_TEMP_UNITS_FAHRENHEIT)
+            else if (_temp_unit == SPLIB_TEMP_UNITS_FAHRENHEIT)
                 k = ((k - 273.15f) * 9.0f / 5.0f) + 32.0f;
-            localBuffer[i] = k;
+            local_buffer[i] = k;
         }
 
         // Only wake up a getFrame caller if this frame is unique
-        CRC16 crc = CalcCRC16Bytes(sizeof(localBuffer), (char *) localBuffer);
-        if (lastCrc != crc) {
-            pthread_mutex_lock(&_frameMutex);
-            memcpy(&_frameBuffer[0], localBuffer, sizeof(localBuffer));
-            _hasFrame = true;
-            pthread_cond_signal(&_frameCond);
-            pthread_mutex_unlock(&_frameMutex);
-            lastCrc = crc;
-            matchingCrcCount = 0;
-            failedAttempsRemaining = maxFailedAttempts;
+        CRC16 crc = CalcCRC16Bytes(sizeof(local_buffer), (char *) local_buffer);
+        if (last_crc != crc) {
+            struct timespec ts;
+            clock_gettime(CLOCK_MONOTONIC, &ts);
+            uint64_t t = (uint64_t) ts.tv_sec * 1000000000 + (uint64_t) ts.tv_nsec;
+
+            std::lock_guard<std::mutex> lk(_frame_mutex);
+            memcpy(&(_frame_info.buffer[0]), local_buffer, sizeof(local_buffer));
+            _frame_info.event_id++;
+            _frame_info.t_ns = t;
+            _has_frame = true;
+            last_crc = crc;
+            matching_crc_count = 0;
+            _frame_cond.notify_one();
         }
 
         // Every now and then, we see the camera start to return the same
         // frame over and over again.  If we see that happening for roughly
         // a full second, reboot the camera
-        if (matchingCrcCount++ > 27) {
+        if (matching_crc_count++ > 27) {
             LOG_WARNING(_logger, "Stale frames detected, rebooting camera");
             cameraDisable();
             cameraEnable();
-            matchingCrcCount = 0;
-            failedAttempsRemaining--;
+            matching_crc_count = 0;
             continue;
         }
     }
-
-    if (failedAttempsRemaining == 0)
-        BAIL("Too many consecutive frame capture failures, exiting");
 
     LOG_DEBUG(_logger, "Driver thread exiting");
 }

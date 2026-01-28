@@ -31,7 +31,9 @@
             "program": "${workspaceFolder}/cpp/Debug/capture",
             "args": [
                 "--frames",
-                "100"
+                "100",
+                "--fps",
+                "1"
             ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}/cpp",

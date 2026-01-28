@@ -18,7 +18,7 @@ class bail_error : public std::runtime_error {
 
     int line() const noexcept { return _line; }
 
-    static void bail(const char *fileName,
+    static void bail(const char *file_name,
                      const int line,
                      const char *format, ...);
 

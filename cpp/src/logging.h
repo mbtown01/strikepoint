@@ -1,8 +1,8 @@
 #pragma once
 
 #include "driver.h"
-#include <pthread.h>
 #include <queue>
+#include <mutex>
 #include <string>
 #include <time.h>
 
@@ -34,22 +34,22 @@ typedef struct {
 
 class Logger {
   public:
-    Logger(const char *logFilePath);
+    Logger(const char *log_file_path);
     ~Logger();
 
-    void log(const char *fileName,
+    void log(const char *file_name,
              const int line,
-             const SPLIB_LogLevel logLevel,
+             const SPLIB_LogLevel log_level,
              const char *format, ...);
 
-    int getMessagesRemaining();
+    int getEntriesRemaining();
 
-    void getNextLogEntry(int *logLevel, char *buffer, size_t bufferLen);
+    void getNextEntry(int *log_level, char *buffer, size_t buffer_size);
 
   private:
-    pthread_mutex_t _logMutex;
-    std::queue<LogEntry> _logBuffer;
-    FILE *_logFile;
+    std::mutex _log_mutex;
+    std::queue<LogEntry> _log_buffer;
+    FILE *_log_file;
 };
 
 } // namespace strikepoint
