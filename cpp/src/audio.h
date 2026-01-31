@@ -2,9 +2,12 @@
 
 #include <atomic>
 #include <liquid/liquid.h>
+#include <map>
 #include <mutex>
 #include <queue>
 #include <thread>
+
+#include "timer.h"
 
 namespace strikepoint {
 
@@ -66,6 +69,7 @@ class AudioEngine {
     std::atomic<bool> _running;
     std::queue<AudioEngine::event> _queue;
     std::mutex _mtx;
+    std::map<std::string, Timer> _timers;
 };
 
 } // namespace strikepoint

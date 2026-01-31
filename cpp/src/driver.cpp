@@ -1,6 +1,7 @@
 #include <functional>
 #include <stdlib.h>
 
+#include <map>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -9,6 +10,7 @@
 #include "driver.h"
 #include "error.h"
 #include "lepton.h"
+#include "timer.h"
 
 using namespace strikepoint;
 
@@ -18,6 +20,7 @@ typedef struct {
     PcmAudioSource *source;
     AudioEngine *audio_engine;
     size_t pixel_count;
+    std::map<std::string, Timer> timers;
 } SessionData;
 
 int
@@ -26,26 +29,25 @@ _errorHandler(SessionData *session,
               std::function<void(void)> func)
 {
     if (session == NULL)
-        return -1;
-
-    Logger &logger = *(session->logger);
+        return -2;
 
     try {
-        // LOG_DEBUG(logger, "ENTERING %s", funcName);
+        TimerGuard guard(session->timers[func_name]);
         func();
-        // LOG_DEBUG(logger, "EXITING %s", funcName);
         return 0;
     } catch (const strikepoint::bail_error &e) {
+        Logger &logger = *(session->logger);
         logger.log(e.file().c_str(), e.line(), SPLIB_LOG_LEVEL_ERROR,
                    "Error in call to %s: %s", func_name, e.what());
         logger.log(e.file().c_str(), e.line(), SPLIB_LOG_LEVEL_ERROR, e.what());
     } catch (const std::exception &e) {
+        Logger &logger = *(session->logger);
         logger.log(__FILE__, __LINE__, SPLIB_LOG_LEVEL_ERROR,
                    "Error in call to %s: %s", func_name, e.what());
         logger.log(__FILE__, __LINE__, SPLIB_LOG_LEVEL_ERROR, e.what());
     }
 
-    return -2;
+    return -1;
 }
 
 int
@@ -54,9 +56,14 @@ SPLIB_Init(SPLIB_SessionHandle *hndl_ptr,
            SPLIB_TemperatureUnit temp_unit,
            const char *log_file_path)
 {
+    if (hndl_ptr == NULL)
+        return -2;
+
     SessionData *session = new SessionData;
     session->logger = new Logger(log_file_path);
     return _errorHandler(session, __func__, [=]() {
+        if (info == NULL)
+            BAIL("info argument cannot be NULL");
         AudioEngine::config audioConfig;
         AudioEngine::defaults(audioConfig);
         session->driver =
@@ -104,10 +111,11 @@ SPLIB_LogHasEntries(SPLIB_SessionHandle hndl, int *hasEntries)
 {
     SessionData *session = static_cast<SessionData *>(hndl);
     return _errorHandler(session, __func__, [=]() {
+        if (hasEntries == NULL)
+            BAIL("hasEntries argument cannot be NULL");
         *hasEntries = session->logger->getEntriesRemaining() > 0;
     });
 }
-
 
 int
 SPLIB_LogGetNextEntry(SPLIB_SessionHandle hndl,
@@ -116,6 +124,10 @@ SPLIB_LogGetNextEntry(SPLIB_SessionHandle hndl,
 {
     SessionData *session = static_cast<SessionData *>(hndl);
     return _errorHandler(session, __func__, [=]() {
+        if (logLevel == NULL)
+            BAIL("logLevel argument cannot be NULL");
+        if (buffer == NULL)
+            BAIL("buffer argument cannot be NULL");
         session->logger->getNextEntry((int *) logLevel, buffer, bufferLen);
     });
 }
@@ -127,6 +139,10 @@ SPLIB_GetAudioStrikeEvents(SPLIB_SessionHandle hndl,
 {
     SessionData *session = static_cast<SessionData *>(hndl);
     return _errorHandler(session, __func__, [=]() {
+        if (event_times == NULL)
+            BAIL("event_times argument cannot be NULL");
+        if (num_events == NULL)
+            BAIL("num_events argument cannot be NULL");
         std::vector<AudioEngine::event> events;
         session->audio_engine->getEvents(events);
         *num_events = events.size();
@@ -139,34 +155,42 @@ SPLIB_GetAudioStrikeEvents(SPLIB_SessionHandle hndl,
 
 int
 SPLIB_LeptonGetFrame(SPLIB_SessionHandle hndl,
-                     float *bufffer,
+                     float *buffer,
                      size_t buffer_size,
                      uint32_t *event_id,
                      uint64_t *timestamp_ns)
 {
     SessionData *session = static_cast<SessionData *>(hndl);
     return _errorHandler(session, __func__, [=]() {
+        if (buffer == NULL)
+            BAIL("buffer argument cannot be NULL");
+        if (event_id == NULL)
+            BAIL("event_id argument cannot be NULL");
+        if (timestamp_ns == NULL)
+            BAIL("timestamp_ns argument cannot be NULL");
         if (buffer_size < session->pixel_count)
             BAIL("Frame buffer too small, required=%zu floats, received %zu",
-                session->pixel_count, buffer_size);
-
+                 session->pixel_count, buffer_size);
         LeptonDriver::frameInfo frameInfo;
         session->driver->getFrame(frameInfo);
         *event_id = frameInfo.event_id;
         *timestamp_ns = frameInfo.t_ns;
-        memcpy(bufffer, &frameInfo.buffer[0],
+        memcpy(buffer, &frameInfo.buffer[0],
                sizeof(float) * session->pixel_count);
     });
 }
-
 
 int
 SPLIB_Shutdown(SPLIB_SessionHandle hndl)
 {
     SessionData *session = static_cast<SessionData *>(hndl);
     return _errorHandler(session, __func__, [=]() {
+        for (const auto &kv : session->timers)
+            printf("%-30s %s\n", kv.first.c_str(), kv.second.to_str().c_str());
         session->driver->shutdown();
         delete session->driver;
+        delete session->audio_engine;
+        delete session->source;
         delete session->logger;
         delete session;
     });

@@ -198,37 +198,44 @@ class StrikeDetectionEngine:
     """
 
     def __init__(self):
-        self.foundBallObservedSeq = list()
-        self.foundBallExpectedSeq = tuple([True]*2 + [False]*2)
+        self.observedSeq = list()
+        self.expectedSeq = tuple([True]*2 + [False]*2)
 
     def reset(self):
-        self.foundBallObservedSeq = list()
+        self.observedSeq = list()
 
     def detectStrike(self, frameInfo: dict, thermalVisualTransform: np.ndarray):
-        visFrame = frameInfo.rgbFrames['visual']
-        Hv, Wv = visFrame.shape[:2]
-        visCircles = findBrightestVisualCircles(visFrame)
-        foundSingleCircle = len(visCircles) == 1
-        visCircle = visCircles[0] if foundSingleCircle else None
-        audioStrikeDetected = frameInfo.metadata.get(
-            'audioStrikeDetected', False)
+        # visCircles = list()
+        # visCircles = findBrightestVisualCircles(frameInfo.rgbFrames['visual'])
+        # foundSingleCircle = len(visCircles) == 1
+        # visCircle = visCircles[0] if foundSingleCircle else None
+        # audioStrikeDetected = frameInfo.metadata.get(
+        #     'audioStrikeDetected', False)
 
-        self.foundBallObservedSeq.append(
-            (frameInfo, foundSingleCircle, visCircle, audioStrikeDetected))
+        self.observedSeq.append((frameInfo, frameInfo.metadata.get(
+            'audioStrikeDetected', False)))
 
         # If we don't yet have enough data, discard
-        if len(self.foundBallObservedSeq) != len(self.foundBallExpectedSeq):
+        while len(self.observedSeq) > len(self.expectedSeq):
+            self.observedSeq = self.observedSeq[1:]
+        if len(self.observedSeq) != len(self.expectedSeq):
+            return None
+
+        # If we haven't HEARD anything, we don't even look...
+        audioStrikeDetected = any(a[1] for a in self.observedSeq)
+        if not audioStrikeDetected:
             return None
 
         # If the observed sequence doesn't match the expected, discard
-        localSeq = self.foundBallObservedSeq
-        self.foundBallObservedSeq = self.foundBallObservedSeq[1:]
-        if any(a != b[1] for a, b in zip(self.foundBallExpectedSeq, localSeq)):
-            return None
-
-        audioStrikeDetected = any(a[3] for a in localSeq)
-        if not audioStrikeDetected:
-            logger.debug("Saw potential strike but no audio event detected")
+        localSeq = list()
+        for (frameInfo, audioStrikeDetected) in self.observedSeq:
+            visCircles = findBrightestVisualCircles(
+                frameInfo.rgbFrames['visual'])
+            foundSingleCircle = len(visCircles) == 1
+            visCircle = visCircles[0] if foundSingleCircle else None
+            localSeq.append(
+                (frameInfo, foundSingleCircle, visCircle, audioStrikeDetected))
+        if any(a != b[1] for a, b in zip(self.expectedSeq, localSeq)):
             return None
 
         t1 = localSeq[0][0].rgbFrames['thermal']
@@ -259,6 +266,7 @@ class StrikeDetectionEngine:
             searchWindowSize=21)
 
         # Warp the thermal images to visual space
+        Hv, Wv = frameInfo.rgbFrames['visual'].shape[:2]
         thermalDiffW = cv2.warpAffine(
             thermalDiff, thermalVisualTransform, (Wv, Hv),
             flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,

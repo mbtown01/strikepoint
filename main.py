@@ -26,16 +26,22 @@ class FileBasedFrameInfoProvider(FrameInfoProvider):
     def __init__(self, fileName: str, timestampScale: float = 1.0):
         self.reader = FrameInfoReader(fileName)
         self.timestampScale = timestampScale
-        frameInfo = self.reader.readFrameInfo()
-        self.baseTimestampLocal = monotonic()
-        self.baseTimestampFile = frameInfo.timestamp * self.timestampScale
-        self.reader.rewind()
+        self.lastFrameTimestamp = None
+        self.lastLocalTimestamp = None
 
     def getFrameInfo(self):
         frameInfo = self.reader.readFrameInfo()
-        localDuration = monotonic() - self.baseTimestampLocal
-        fileDuration = (frameInfo.timestamp *
-                        self.timestampScale - self.baseTimestampFile)
+        if frameInfo is None:
+            self.reader.rewind()
+            frameInfo = self.reader.readFrameInfo()
+            self.lastFrameTimestamp = None
+        if self.lastFrameTimestamp is None:
+            self.lastFrameTimestamp = frameInfo.timestamp
+            self.lastLocalTimestamp = monotonic()
+            frameInfo = self.reader.readFrameInfo()
+
+        localDuration = monotonic() - self.lastLocalTimestamp
+        fileDuration = frameInfo.timestamp - self.lastFrameTimestamp
         durationDelta = fileDuration - localDuration
         if durationDelta > 0:
             sleep(durationDelta)

@@ -15,7 +15,6 @@
 #include "LEPTON_RAD.h"
 #include "LEPTON_SDK.h"
 #include "LEPTON_SYS.h"
-#include "crc16.h"
 #include "error.h"
 #include "lepton.h"
 
@@ -49,6 +48,17 @@
     } while (0)
 
 using namespace strikepoint;
+
+class reboot_error : public bail_error {
+  public:
+    reboot_error(const char *file, int line, const char *format, ...) :
+        bail_error(file, line, format)
+    {
+    }
+};
+
+#define REBOOT(fmt, ...) \
+    throw reboot_error(__FILE__, __LINE__, fmt, ##__VA_ARGS__)
 
 /*********************************************************************
  * LeptonDriver - constructor for the Lepton driver
@@ -160,8 +170,11 @@ LeptonDriver::LeptonDriver(Logger &logger,
  *********************************************************************/
 LeptonDriver::~LeptonDriver()
 {
-    BAIL_ON_FAILED_ERRNO(close(_spi_fd));
-    BAIL_ON_FAILED_LEP(LEP_ClosePort(&_port_desc));
+    for (const auto &kv : _timers)
+        printf("%-30s %s\n", kv.first.c_str(), kv.second.to_str().c_str());
+
+    close(_spi_fd);
+    LEP_ClosePort(&_port_desc);
 }
 
 /*********************************************************************
@@ -170,8 +183,6 @@ LeptonDriver::~LeptonDriver()
 void
 LeptonDriver::shutdown()
 {
-    LOG_DEBUG(_logger, "Driver shutdown requested, waiting for capture thread");
-
     _shutdown_requested = true;
 
     // wake any waiters (notify all)
@@ -186,8 +197,6 @@ LeptonDriver::shutdown()
 
     if (_isRunning)
         LOG_ERROR(_logger, "shutdown() called but session is still running");
-
-    LOG_DEBUG(_logger, "Driver shutdown complete");
 }
 
 /*********************************************************************
@@ -235,27 +244,21 @@ LeptonDriver::startPolling()
 void
 LeptonDriver::cameraDisable()
 {
-    LOG_DEBUG(_logger, "SPLIB_LeptonDisable() START");
     LEP_STATUS_T statusDesc;
     LEP_RESULT rtn;
 
     BAIL_ON_FAILED_LEP(LEP_GetSysStatus(&_port_desc, &statusDesc));
-    LOG_DEBUG(_logger, "Camera status before disable: %d", statusDesc.camStatus);
 
     do {
         rtn = LEP_RunOemPowerDown(&_port_desc);
-        LOG_DEBUG(_logger, "Power down command sent, rtn=%d", rtn);
         usleep(250000);
     } while (rtn != LEP_OK);
 
     do {
         rtn = LEP_GetSysStatus(&_port_desc, &statusDesc);
-        LOG_DEBUG(_logger, "Camera status test disable: %d, rtn=%d",
-                  statusDesc.camStatus, rtn);
         usleep(250000);
     } while (rtn != LEP_OK || statusDesc.camStatus != LEP_SYSTEM_READY);
 
-    LOG_DEBUG(_logger, "SPLIB_LeptonDisable() COMPLETE");
 }
 
 /*********************************************************************
@@ -264,16 +267,13 @@ LeptonDriver::cameraDisable()
 void
 LeptonDriver::cameraEnable()
 {
-    LOG_DEBUG(_logger, "SPLIB_LeptonEnable() START");
     LEP_STATUS_T statusDesc;
     LEP_RESULT rtn;
 
     BAIL_ON_FAILED_LEP(LEP_GetSysStatus(&_port_desc, &statusDesc));
-    LOG_DEBUG(_logger, "Camera status before enable: %d", statusDesc.camStatus);
 
     do {
         rtn = LEP_RunOemPowerOn(&_port_desc);
-        LOG_DEBUG(_logger, "Power on command sent, rtn=%d", rtn);
         usleep(250000);
     } while (rtn != LEP_OK);
 
@@ -281,25 +281,18 @@ LeptonDriver::cameraEnable()
 
     do {
         rtn = LEP_GetSysStatus(&_port_desc, &statusDesc);
-        LOG_DEBUG(_logger, "Camera status test disable: %d, rtn=%d",
-                  statusDesc.camStatus, rtn);
         usleep(250000);
     } while (rtn != LEP_OK || statusDesc.camStatus != LEP_SYSTEM_READY);
 
     BAIL_ON_FAILED_LEP(LEP_RunSysFFCNormalization(&_port_desc));
     BAIL_ON_FAILED_LEP(
         LEP_SetOemVideoOutputEnable(&_port_desc, LEP_VIDEO_OUTPUT_ENABLE));
-
     BAIL_ON_FAILED_LEP(LEP_GetSysStatus(&_port_desc, &statusDesc));
-    LOG_DEBUG(_logger, "STARTUP Camera status: %d", statusDesc.camStatus);
 
     while (statusDesc.camStatus != LEP_SYSTEM_FLAT_FIELD_IN_PROCESS) {
         usleep(250000);
         BAIL_ON_FAILED_LEP(LEP_GetSysStatus(&_port_desc, &statusDesc));
-        LOG_DEBUG(_logger, "Camera status waiting for FFC: %d", statusDesc.camStatus);
     }
-
-    LOG_DEBUG(_logger, "SPLIB_LeptonEnable() COMPLETE");
 }
 
 /*********************************************************************
@@ -383,78 +376,82 @@ LeptonDriver::_spiPollingThreadMain(LeptonDriver *driver)
 void
 LeptonDriver::_driverMain()
 {
-    uint8_t buff[PACKETS_PER_FRAME][PACKET_SIZE];
+    uint8_t raw_buffer[PACKETS_PER_FRAME * PACKET_SIZE];
     const int pixel_count = FRAME_WIDTH * FRAME_HEIGHT;
-    int matching_crc_count = 0;
-    CRC16 last_crc = 0;
+    float local_buffer[pixel_count], prev_buffer[pixel_count];
+    int stale_frame_count = 0;
 
+    TIMER_GUARD_BLOCK(_timers["thermal_capture"])
     while (_shutdown_requested == false) {
-        // Read from SPI until we see the start of a frame
-        int tries = 100;
-        _safeRead(_spi_fd, buff[0], PACKET_SIZE);
-        while ((buff[0][0] & 0x0F) != 0 && buff[0][1] != 0 && tries-- > 0) {
-            usleep(10000);
-            _safeRead(_spi_fd, buff[0], PACKET_SIZE);
-        }
-        if (tries == 0)
-            continue;
+        try {
+            // Read from SPI until we see the start of a frame
+            _safeRead(_spi_fd, raw_buffer, PACKET_SIZE);
+            unsigned int attempt_count = 0;
+            while ((raw_buffer[0] & 0x0F) != 0 && raw_buffer[1] != 0) {
+                if (attempt_count++ > 100)
+                    REBOOT("trouble syncing frame start");
+                usleep(10000);
+                _safeRead(_spi_fd, raw_buffer, PACKET_SIZE);
+            }
 
-        // After seeing the start of a frame, read the rest of the packets
-        int good_packets = 1;
-        for (int p = 1; p < PACKETS_PER_FRAME; p++, good_packets++) {
-            _safeRead(_spi_fd, buff[p], PACKET_SIZE);
-            if ((buff[p][0] & 0x0F) != 0 || buff[p][1] != p)
-                break;
-        }
+            // After seeing the start of a frame, read the rest of the packets
+            for (int p = 1; p < PACKETS_PER_FRAME; p++) {
+                uint8_t *raw_buf = raw_buffer + p * PACKET_SIZE;
+                _safeRead(_spi_fd, raw_buf, PACKET_SIZE);
+                if ((raw_buf[0] & 0x0F) != 0 || raw_buf[1] != p)
+                    REBOOT("bad frame received at (%d/%d)", p, PACKETS_PER_FRAME);
+            }
 
-        // If we didn't see all the packetes in the frame, reboot the camera
-        if (good_packets != PACKETS_PER_FRAME) {
-            LOG_WARNING(_logger, "Bad frame received (%d/%d), rebooting camera",
-                        good_packets, PACKETS_PER_FRAME);
+            // Updated the shared frame buffer and signal any waiters
+            bool matches_last_frame = true;
+            for (int r = 0; r < FRAME_HEIGHT; ++r) {
+                uint8_t *raw_row = raw_buffer + (r * PACKET_SIZE + 4);
+                float *out_row = local_buffer + r * FRAME_WIDTH;
+                float *prev_row = prev_buffer + r * FRAME_WIDTH;
+                for (int c = 0; c < FRAME_WIDTH; ++c) {
+                    uint16_t v = ((uint16_t) raw_row[2 * c] << 8) | raw_row[2 * c + 1];
+                    float k = v * 0.01f;
+                    out_row[c] = k;
+                    matches_last_frame &= (prev_row[c] == k);
+                    prev_row[c] = k;
+                }
+            }
+
+            // Every now and then, we see the camera start to return the same
+            // frame over and over again.  If we see that happening for roughly
+            // a full second, reboot the camera
+            if (matches_last_frame && stale_frame_count++ > 27)
+                REBOOT("stale frames detected");
+
+            // Only wake up a getFrame caller if this frame is unique
+            if (!matches_last_frame) {
+                if (_temp_unit == SPLIB_TEMP_UNITS_CELCIUS)
+                    for (int i = 0; i < pixel_count; ++i)
+                        local_buffer[i] -= 273.15f;
+                if (_temp_unit == SPLIB_TEMP_UNITS_FAHRENHEIT)
+                    for (int i = 0; i < pixel_count; ++i)
+                        local_buffer[i] = (local_buffer[i] - 273.15f) * 9.0f / 5.0f + 32.0f;
+
+                struct timespec ts;
+                clock_gettime(CLOCK_MONOTONIC, &ts);
+                uint64_t t = (uint64_t) ts.tv_sec * 1000000000 + (uint64_t) ts.tv_nsec;
+
+                std::lock_guard<std::mutex> lk(_frame_mutex);
+                memcpy(&(_frame_info.buffer[0]), local_buffer, sizeof(local_buffer));
+                _frame_info.event_id++;
+                _frame_info.t_ns = t;
+                _has_frame = true;
+                _frame_cond.notify_one();
+                stale_frame_count = 0;
+            }
+
+        } catch (const reboot_error &e) {
+            char msg[2048];
+            snprintf(msg, sizeof(msg), "REBOOTING due to %s", e.what());
+            LOG_WARNING(_logger, msg);
             cameraDisable();
             cameraEnable();
-            continue;
-        }
-
-        // Updated the shared frame buffer and signal any waiters
-        float local_buffer[pixel_count];
-        for (int i = 0; i < pixel_count; i++) {
-            int r = i / FRAME_WIDTH, c = i % FRAME_WIDTH;
-            uint16_t v = (buff[r][4 + 2 * c] << 8) + buff[r][4 + 2 * c + 1];
-            float k = (float) v * 0.01f;
-            if (_temp_unit == SPLIB_TEMP_UNITS_CELCIUS)
-                k = k - 273.15f;
-            else if (_temp_unit == SPLIB_TEMP_UNITS_FAHRENHEIT)
-                k = ((k - 273.15f) * 9.0f / 5.0f) + 32.0f;
-            local_buffer[i] = k;
-        }
-
-        // Only wake up a getFrame caller if this frame is unique
-        CRC16 crc = CalcCRC16Bytes(sizeof(local_buffer), (char *) local_buffer);
-        if (last_crc != crc) {
-            struct timespec ts;
-            clock_gettime(CLOCK_MONOTONIC, &ts);
-            uint64_t t = (uint64_t) ts.tv_sec * 1000000000 + (uint64_t) ts.tv_nsec;
-
-            std::lock_guard<std::mutex> lk(_frame_mutex);
-            memcpy(&(_frame_info.buffer[0]), local_buffer, sizeof(local_buffer));
-            _frame_info.event_id++;
-            _frame_info.t_ns = t;
-            _has_frame = true;
-            last_crc = crc;
-            matching_crc_count = 0;
-            _frame_cond.notify_one();
-        }
-
-        // Every now and then, we see the camera start to return the same
-        // frame over and over again.  If we see that happening for roughly
-        // a full second, reboot the camera
-        if (matching_crc_count++ > 27) {
-            LOG_WARNING(_logger, "Stale frames detected, rebooting camera");
-            cameraDisable();
-            cameraEnable();
-            matching_crc_count = 0;
-            continue;
+            stale_frame_count = 0;
         }
     }
 

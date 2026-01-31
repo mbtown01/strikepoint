@@ -37,6 +37,9 @@ AudioEngine::~AudioEngine()
         if (_thread.joinable())
             _thread.join();
     }
+
+    for (const auto &kv : _timers)
+        printf("%-30s %s\n", kv.first.c_str(), kv.second.to_str().c_str());
 }
 
 void
@@ -68,6 +71,7 @@ AudioEngine::_captureLoop()
     // - apply high-pass filter to remove low-frequency content (room rumble, DC)
     // - compute energy/peak metrics on the high-passed signal
     // - update noise estimate and decide whether the block contains a strike
+    TIMER_GUARD_BLOCK(_timers["audio_capture"])
     while (!_source.is_eof() && _running.load(std::memory_order_relaxed)) {
         // Read a block of samples (blocking or non-blocking depending on source)
         _source.read(&(buf[0]), frameSize);

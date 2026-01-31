@@ -13,6 +13,20 @@
             "cwd": "${workspaceFolder}"
         },
         {
+            "name": "Web app (live, profile)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "cProfile",
+            "args": [
+                "-o",
+                "${workspaceFolder}/profile.prof",
+                "main.py"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": true
+        },
+        {
             "name": "Web app (testing)",
             "type": "debugpy",
             "request": "launch",
@@ -31,7 +45,7 @@
             "program": "${workspaceFolder}/cpp/Debug/capture",
             "args": [
                 "--frames",
-                "100",
+                "10",
                 "--fps",
                 "1"
             ],

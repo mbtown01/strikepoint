@@ -1,6 +1,8 @@
 # Strikepoint-specific stuff
 cpp/Release
 cpp/Debug
+perf.data
+profile.prof
 *.log
 *.db
 *.bin

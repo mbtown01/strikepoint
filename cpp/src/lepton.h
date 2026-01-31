@@ -1,17 +1,19 @@
 #pragma once
 
+#include <atomic>
+#include <condition_variable>
+#include <map>
+#include <mutex>
 #include <queue>
 #include <string>
+#include <thread>
 #include <time.h>
 #include <vector>
-#include <thread>
-#include <mutex>
-#include <condition_variable>
-#include <atomic>
 
 #include "LEPTON_Types.h"
 #include "driver.h"
 #include "logging.h"
+#include "timer.h"
 
 namespace strikepoint {
 
@@ -21,7 +23,7 @@ class LeptonDriver {
     typedef struct {
         uint64_t t_ns;             // CLOCK_MONOTONIC timestamp
         std::vector<float> buffer; // pointer to frame buffer
-        uint32_t event_id;          // increments each frame
+        uint32_t event_id;         // increments each frame
     } frameInfo;
 
   public:
@@ -56,6 +58,7 @@ class LeptonDriver {
     std::atomic<bool> _has_frame;
     std::atomic<bool> _shutdown_requested;
     std::atomic<bool> _isRunning;
+    std::map<std::string, Timer> _timers;
     strikepoint::Logger &_logger;
     SPLIB_TemperatureUnit _temp_unit;
     frameInfo _frame_info;

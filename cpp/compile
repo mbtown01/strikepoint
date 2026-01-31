@@ -31,11 +31,11 @@ while [ $# -gt 0 ]; do
         --help|-h)
             usage
             ;;
-        Debug|debug)
+        Debug*|debug*)
             BUILD_CONFIG="Debug"
             shift
             ;;
-        Release|release)
+        Release*|release*)
             BUILD_CONFIG="Release"
             shift
             ;;

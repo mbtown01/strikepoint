@@ -2,10 +2,10 @@
 
 using namespace strikepoint;
 
-void
-bail_error::bail(const char *file_name,
-                              const int line,
-                              const char *format, ...)
+strikepoint::bail_error::bail_error(const char *file, int line, const char *format, ...) :
+    _file(file),
+    _line(line),
+    std::runtime_error("")
 {
     char msg_str[4096];
     va_list args;
@@ -14,5 +14,5 @@ bail_error::bail(const char *file_name,
     vsnprintf(msg_str, sizeof(msg_str), format, args);
     va_end(args);
 
-    throw bail_error(std::string(msg_str), file_name, line);
+    _message = std::string(msg_str);
 }
