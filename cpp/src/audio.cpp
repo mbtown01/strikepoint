@@ -1,39 +1,60 @@
-#include "audio.h"
-#include "error.h"
 #include <chrono>
 #include <cmath>
 #include <ctime>
+#include <unistd.h>
+
+#include "audio.h"
+#include "error.h"
 
 using namespace strikepoint;
 
-AudioEngine::AudioEngine(IAudioSource &source, AudioEngine::config &cfg) :
-    _running(false),
+AudioEngine::AudioEngine(Logger &logger,
+                         IAudioSource &source, AudioEngine::config &cfg) :
+    _is_running(false),
     _source(source),
-    _hp(nullptr),
-    _cfg(cfg)
+    _cfg(cfg),
+    _logger(logger)
 {
-    _hp = iirfilt_rrrf_create_prototype(
-        LIQUID_IIRDES_BUTTER,
-        LIQUID_IIRDES_HIGHPASS,
-        LIQUID_IIRDES_SOS,
-        4,
-        _cfg.cutoff_hz / (float) _source.sample_rate_hz(),
-        0.0f, // f0 unused for high-pass
-        1.0f, // Ap (passband ripple) unused for Butterworth
-        60.0f // As (stopband attenuation) unused for Butterworth
-    );
+    _thread = std::thread([this] {
+        iirfilt_rrrf hp = iirfilt_rrrf_create_prototype(
+            LIQUID_IIRDES_BUTTER,
+            LIQUID_IIRDES_HIGHPASS,
+            LIQUID_IIRDES_SOS,
+            4,
+            _cfg.cutoff_hz / (float) _source.sample_rate_hz(),
+            0.0f, // f0 unused for high-pass
+            1.0f, // Ap (passband ripple) unused for Butterworth
+            60.0f // As (stopband attenuation) unused for Butterworth
+        );
+        try {
+            if (!hp)
+                BAIL("Failed to create liquid-dsp high-pass filter");
+            _captureLoop(hp);
+        } catch (const bail_error &e) {
+            _logger.log(
+                e.file().c_str(), e.line(), SPLIB_LOG_LEVEL_ERROR, e.what());
+        } catch (const std::exception &e) {
+            _logger.log(
+                __FILE__, __LINE__, SPLIB_LOG_LEVEL_ERROR, e.what());
+        } catch (...) {
+            _logger.log(
+                __FILE__, __LINE__, SPLIB_LOG_LEVEL_ERROR,
+                "Unknown exception in audio capture thread");
+        }
 
-    if (!_hp)
-        BAIL("Failed to create liquid-dsp high-pass filter");
-
-    _running.store(true);
-    _thread = std::thread([this] { _captureLoop(); });
+        if (hp)
+            iirfilt_rrrf_destroy(hp);
+    });
+    for (int i = 0; i < 5000 && !_is_running.load(); i++)
+        usleep(1000);
+    if (!_is_running.load())
+        BAIL("Somehow the listening thread never started");
 }
 
 AudioEngine::~AudioEngine()
 {
-    if (_running.load()) {
-        _running.store(false);
+    if (_is_running.load()) {
+        _is_running.store(false);
         if (_thread.joinable())
             _thread.join();
     }
@@ -53,7 +74,7 @@ AudioEngine::defaults(AudioEngine::config &cfg)
 }
 
 void
-AudioEngine::_captureLoop()
+AudioEngine::_captureLoop(iirfilt_rrrf hp)
 {
     // BUFFER SETUP
     // frameSize = number of samples per processing block provided by the source.
@@ -72,7 +93,8 @@ AudioEngine::_captureLoop()
     // - compute energy/peak metrics on the high-passed signal
     // - update noise estimate and decide whether the block contains a strike
     TIMER_GUARD_BLOCK(_timers["audio_capture"])
-    while (!_source.is_eof() && _running.load(std::memory_order_relaxed)) {
+    _is_running.store(true);
+    while (!_source.is_eof() && _is_running.load(std::memory_order_relaxed)) {
         // Read a block of samples (blocking or non-blocking depending on source)
         _source.read(&(buf[0]), frameSize);
 
@@ -80,7 +102,7 @@ AudioEngine::_captureLoop()
         // This removes low-frequency components so we focus on transient, percussive energy.
         float y = 0;
         for (int i = 0; i < frameSize; ++i) {
-            iirfilt_rrrf_execute(_hp, buf[i], &y);
+            iirfilt_rrrf_execute(hp, buf[i], &y);
             buf_hp[i] = y;
         }
 
@@ -124,6 +146,8 @@ AudioEngine::_captureLoop()
             _queue.push(e);
         }
     }
+
+    iirfilt_rrrf_destroy(hp);
 }
 
 void

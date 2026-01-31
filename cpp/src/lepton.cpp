@@ -40,13 +40,6 @@
             BAIL("'%s' returned %d: %s", #cmd, rtn, strerror(errno)); \
     } while (0)
 
-#define BAIL_ON_FAILED(cmd)                      \
-    do {                                         \
-        int rtn = cmd;                           \
-        if (rtn < 0)                             \
-            BAIL("'%s' returned %d", #cmd, rtn); \
-    } while (0)
-
 using namespace strikepoint;
 
 class reboot_error : public bail_error {
@@ -70,10 +63,8 @@ LeptonDriver::LeptonDriver(Logger &logger,
     _spi_fd(0),
     _temp_unit(temp_unit),
     _has_frame(false),
-    _shutdown_requested(false),
-    _isRunning(false)
+    _is_running(false)
 {
-
     _frame_info.event_id = 0;
     _frame_info.buffer.resize(FRAME_WIDTH * FRAME_HEIGHT);
 
@@ -163,6 +154,34 @@ LeptonDriver::LeptonDriver(Logger &logger,
 
     BAIL_ON_FAILED_LEP(LEP_GetSysStatus(&_port_desc, &statusDesc));
     LOG_INFO(_logger, "STARTUP Camera status: %d", statusDesc.camStatus);
+
+    _thread = std::thread([this] { 
+        bool threwException = true;
+
+        try {
+            _driverMain();
+            threwException = false;
+        } catch (const bail_error &e) {
+            _logger.log(
+                e.file().c_str(), e.line(), SPLIB_LOG_LEVEL_ERROR, e.what());
+        } catch (const std::exception &e) {
+            _logger.log(
+                __FILE__, __LINE__, SPLIB_LOG_LEVEL_ERROR, e.what());
+        } catch (...) {
+            _logger.log(
+                __FILE__, __LINE__, SPLIB_LOG_LEVEL_ERROR,
+                "Unknown exception in driver thread");
+        }
+
+        if (threwException) {
+            std::lock_guard<std::mutex> lk(_frame_mutex);
+            _has_frame.store(false);
+            _frame_cond.notify_all();
+        } });
+    for (int i = 0; i < 5000 && !_is_running.load(); i++)
+        usleep(1000);
+    if (!_is_running.load())
+        BAIL("Somehow the polling thread never started");
 }
 
 /*********************************************************************
@@ -170,33 +189,23 @@ LeptonDriver::LeptonDriver(Logger &logger,
  *********************************************************************/
 LeptonDriver::~LeptonDriver()
 {
+    if (_is_running.load()) {
+        _is_running.store(false);
+        // wake any waiters (notify all)
+        {
+            std::lock_guard<std::mutex> lk(_frame_mutex);
+        }
+        _frame_cond.notify_all();
+
+        if (_thread.joinable())
+            _thread.join();
+    }
+
     for (const auto &kv : _timers)
         printf("%-30s %s\n", kv.first.c_str(), kv.second.to_str().c_str());
 
     close(_spi_fd);
     LEP_ClosePort(&_port_desc);
-}
-
-/*********************************************************************
- * shutdown - shutdown the Lepton driver and camera
- *********************************************************************/
-void
-LeptonDriver::shutdown()
-{
-    _shutdown_requested = true;
-
-    // wake any waiters (notify all)
-    {
-        std::lock_guard<std::mutex> lk(_frame_mutex);
-        // nothing else to do inside lock; lock/unlock establishes happens-before
-    }
-    _frame_cond.notify_all();
-
-    if (_thread.joinable())
-        _thread.join();
-
-    if (_isRunning)
-        LOG_ERROR(_logger, "shutdown() called but session is still running");
 }
 
 /*********************************************************************
@@ -212,30 +221,6 @@ LeptonDriver::getDriverInfo(SPLIB_DriverInfo *info)
     info->versionMinor = SPLIB_VERSION_MINOR;
     info->frameWidth = FRAME_WIDTH;
     info->frameHeight = FRAME_HEIGHT;
-}
-
-/*********************************************************************
- * startPolling - start the SPI polling thread
- *
- * Uses std::thread instead of pthread_create.
- *********************************************************************/
-void
-LeptonDriver::startPolling()
-{
-    if (_isRunning)
-        BAIL("Attempt to start already running polling thread");
-
-    // Kickoff the driver thread
-    LOG_INFO(_logger, "Starting frame capture thread");
-
-    // start std::thread which calls the static wrapper that handles exceptions
-    _thread = std::thread(&LeptonDriver::_spiPollingThreadMain, this);
-
-    // Give the thread 5 seconds to start up (same behavior as before)
-    for (int i = 0; i < 5000 && !_isRunning; i++)
-        usleep(1000);
-    if (!_isRunning)
-        BAIL("Somehow the polling thread never started");
 }
 
 /*********************************************************************
@@ -258,7 +243,6 @@ LeptonDriver::cameraDisable()
         rtn = LEP_GetSysStatus(&_port_desc, &statusDesc);
         usleep(250000);
     } while (rtn != LEP_OK || statusDesc.camStatus != LEP_SYSTEM_READY);
-
 }
 
 /*********************************************************************
@@ -304,22 +288,20 @@ LeptonDriver::cameraEnable()
 void
 LeptonDriver::getFrame(LeptonDriver::frameInfo &frame_info)
 {
-    if (!_isRunning)
-        BAIL("Frame requested but SPI polling thread not running");
-    if (_shutdown_requested)
-        BAIL("SDK is shutting down");
+    if (!_is_running.load())
+        BAIL("Driver thread is not running");
 
     std::unique_lock<std::mutex> lk(_frame_mutex);
-    _frame_cond.wait(lk, [this] { return _has_frame.load() || _shutdown_requested.load(); });
+    _frame_cond.wait(lk, [this] { return _has_frame.load() || !_is_running.load(); });
 
-    if (_has_frame) {
+    if (_has_frame.load()) {
         struct timespec ts;
         clock_gettime(CLOCK_MONOTONIC, &ts);
         frame_info.t_ns = _frame_info.t_ns;
         frame_info.event_id = _frame_info.event_id;
         frame_info.buffer = _frame_info.buffer;
+        _has_frame.store(false);
     }
-    _has_frame.store(false);
 }
 
 /*********************************************************************
@@ -341,36 +323,6 @@ _safeRead(int fd, void *buf, size_t len)
 }
 
 /*********************************************************************
- * _spiPollingThreadMain - thread entry point wrapper
- *********************************************************************/
-void
-LeptonDriver::_spiPollingThreadMain(LeptonDriver *driver)
-{
-    bool threwException = true;
-
-    try {
-        driver->_isRunning = true;
-        driver->_driverMain();
-        threwException = false;
-    } catch (const bail_error &e) {
-        driver->_logger.log(
-            e.file().c_str(), e.line(), SPLIB_LOG_LEVEL_ERROR, e.what());
-    } catch (const std::exception &e) {
-        driver->_logger.log(
-            __FILE__, __LINE__, SPLIB_LOG_LEVEL_ERROR, e.what());
-    }
-
-    driver->_isRunning = false;
-
-    if (threwException) {
-        std::lock_guard<std::mutex> lk(driver->_frame_mutex);
-        driver->_has_frame = false;
-        // notify any waiter that thread failed
-        driver->_frame_cond.notify_all();
-    }
-}
-
-/*********************************************************************
  * _driverMain - Driver logic main loop
  *********************************************************************/
 void
@@ -382,7 +334,8 @@ LeptonDriver::_driverMain()
     int stale_frame_count = 0;
 
     TIMER_GUARD_BLOCK(_timers["thermal_capture"])
-    while (_shutdown_requested == false) {
+    _is_running.store(true);
+    while (_is_running.load()) {
         try {
             // Read from SPI until we see the start of a frame
             _safeRead(_spi_fd, raw_buffer, PACKET_SIZE);
@@ -440,7 +393,7 @@ LeptonDriver::_driverMain()
                 memcpy(&(_frame_info.buffer[0]), local_buffer, sizeof(local_buffer));
                 _frame_info.event_id++;
                 _frame_info.t_ns = t;
-                _has_frame = true;
+                _has_frame.store(true);
                 _frame_cond.notify_one();
                 stale_frame_count = 0;
             }

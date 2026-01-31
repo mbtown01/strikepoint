@@ -9,7 +9,6 @@ class LeptonDriverTests(unittest.TestCase):
 
     def setUp(self):
         self.splibDriver = SplibDriver(logPath=None)
-        self.splibDriver.startPolling()
 
     def tearDown(self):
         self.splibDriver.shutdown()

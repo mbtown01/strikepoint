@@ -7,6 +7,7 @@
 #include <queue>
 #include <thread>
 
+#include "logging.h"
 #include "timer.h"
 
 namespace strikepoint {
@@ -48,7 +49,7 @@ class AudioEngine {
     };
 
   public:
-    AudioEngine(IAudioSource &source, AudioEngine::config &cfg);
+    AudioEngine(Logger &logger, IAudioSource &source, AudioEngine::config &cfg);
     ~AudioEngine();
 
     // set default config values
@@ -59,14 +60,14 @@ class AudioEngine {
 
   private:
     // capture loop and helpers (camelCase names)
-    void _captureLoop();
+    void _captureLoop(iirfilt_rrrf hp);
 
   private:
     IAudioSource &_source;
     AudioEngine::config _cfg;
-    iirfilt_rrrf _hp;
+    strikepoint::Logger &_logger;
     std::thread _thread;
-    std::atomic<bool> _running;
+    std::atomic<bool> _is_running;
     std::queue<AudioEngine::event> _queue;
     std::mutex _mtx;
     std::map<std::string, Timer> _timers;

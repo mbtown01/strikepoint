@@ -47,9 +47,6 @@ TEST(DriverApi, SimpleFramePoll)
     rc = SPLIB_Init(&hndl, &info, SPLIB_TEMP_UNITS_FAHRENHEIT, NULL);
     EXPECT_EQ(rc, 0);
 
-    rc = SPLIB_LeptonStartPolling(hndl);
-    EXPECT_EQ(rc, 0);
-
     const size_t pixel_count = info.frameWidth * info.frameHeight;
     float buffer[pixel_count];
     uint32_t event_id;
@@ -71,9 +68,6 @@ TEST(DriverApi, RecoveryFramePollOnStartup)
     EXPECT_EQ(rc, 0);
 
     rc = SPLIB_LeptonDisable(hndl);
-    EXPECT_EQ(rc, 0);
-
-    rc = SPLIB_LeptonStartPolling(hndl);
     EXPECT_EQ(rc, 0);
 
     const size_t pixel_count = info.frameWidth * info.frameHeight;

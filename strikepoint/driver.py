@@ -34,7 +34,7 @@ class SplibDriver:
 
     allFnNameList = [
         "SPLIB_Shutdown", "SPLIB_Init", "SPLIB_LeptonGetFrame",
-        "SPLIB_LeptonDisable", "SPLIB_LeptonStartPolling",
+        "SPLIB_LeptonDisable",
         "SPLIB_LogGetNextEntry", "SPLIB_LogHasEntries",
         "SPLIB_GetAudioStrikeEvents"]
 
@@ -87,11 +87,6 @@ class SplibDriver:
         if rc != 0:
             raise RuntimeError(f"Call to {fnName} failed rc={rc}")
         return rc
-
-    def startPolling(self):
-        """Start the SPI poling thread.
-        """
-        self._makeApiCall("SPLIB_LeptonStartPolling")
 
     def getFrameWithMetadata(self):
         """Get a single frame from the driver."""

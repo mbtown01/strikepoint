@@ -35,10 +35,6 @@ class LeptonDriver {
 
     void getDriverInfo(SPLIB_DriverInfo *info);
 
-    void startPolling();
-
-    void shutdown();
-
     void cameraDisable();
 
     void cameraEnable();
@@ -46,8 +42,6 @@ class LeptonDriver {
     void getFrame(frameInfo &frame_info);
 
   private:
-    static void _spiPollingThreadMain(LeptonDriver *self);
-
     void _driverMain();
 
   private:
@@ -56,8 +50,7 @@ class LeptonDriver {
     std::mutex _frame_mutex;
     std::condition_variable _frame_cond;
     std::atomic<bool> _has_frame;
-    std::atomic<bool> _shutdown_requested;
-    std::atomic<bool> _isRunning;
+    std::atomic<bool> _is_running;
     std::map<std::string, Timer> _timers;
     strikepoint::Logger &_logger;
     SPLIB_TemperatureUnit _temp_unit;

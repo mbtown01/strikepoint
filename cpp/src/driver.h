@@ -37,9 +37,6 @@ int SPLIB_Init(SPLIB_SessionHandle *hndl_ptr,
                SPLIB_TemperatureUnit temp_unit,
                const char *log_file_path);
 
-// Start the SPI polling thread
-int SPLIB_LeptonStartPolling(SPLIB_SessionHandle hndl);
-
 // disable the camera and put it into power down mode
 int SPLIB_LeptonDisable(SPLIB_SessionHandle hndl);
 

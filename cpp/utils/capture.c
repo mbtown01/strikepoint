@@ -96,10 +96,6 @@ main(int argc, char *argv[])
         exit(1);
     }
 
-    // If we needed to set units or anything, we'd do that before we
-    // start polling here
-    SPLIB_LeptonStartPolling(hndl);
-
     SPLIB_LogLevel level;
     char logBuffer[4096];
     int msgRemaining = 0;

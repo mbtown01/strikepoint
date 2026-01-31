@@ -45,6 +45,10 @@ _errorHandler(SessionData *session,
         logger.log(__FILE__, __LINE__, SPLIB_LOG_LEVEL_ERROR,
                    "Error in call to %s: %s", func_name, e.what());
         logger.log(__FILE__, __LINE__, SPLIB_LOG_LEVEL_ERROR, e.what());
+    } catch (...) {
+        Logger &logger = *(session->logger);
+        logger.log(__FILE__, __LINE__, SPLIB_LOG_LEVEL_ERROR,
+                   "Unknown error in call to %s", func_name);
     }
 
     return -1;
@@ -74,17 +78,8 @@ SPLIB_Init(SPLIB_SessionHandle *hndl_ptr,
         session->source =
             new PcmAudioSource("default", 48000, 1, audioConfig.block_size);
         session->audio_engine = new AudioEngine(
-            *(session->source), audioConfig);
+            *(session->logger), *(session->source), audioConfig);
         *hndl_ptr = (SPLIB_SessionHandle) session;
-    });
-}
-
-int
-SPLIB_LeptonStartPolling(SPLIB_SessionHandle hndl)
-{
-    SessionData *session = static_cast<SessionData *>(hndl);
-    return _errorHandler(session, __func__, [=]() {
-        session->driver->startPolling();
     });
 }
 
@@ -187,7 +182,6 @@ SPLIB_Shutdown(SPLIB_SessionHandle hndl)
     return _errorHandler(session, __func__, [=]() {
         for (const auto &kv : session->timers)
             printf("%-30s %s\n", kv.first.c_str(), kv.second.to_str().c_str());
-        session->driver->shutdown();
         delete session->driver;
         delete session->audio_engine;
         delete session->source;

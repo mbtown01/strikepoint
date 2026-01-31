@@ -1,6 +1,8 @@
+#include <gtest/gtest.h>
+
 #include "audio-wav.h"
 #include "audio.h"
-#include <gtest/gtest.h>
+#include "logging.h"
 
 using namespace strikepoint;
 
@@ -9,9 +11,10 @@ void
 testForStrikeEvents(std::string fileName, std::vector<uint64_t> expectedEventTimes)
 {
     WavAudioSource source(fileName);
+    Logger logger(nullptr);
     AudioEngine::config config = {};
     AudioEngine::defaults(config);
-    AudioEngine audio(source, config);
+    AudioEngine audio(logger, source, config);
 
     while (!source.is_eof())
         usleep(10000);
