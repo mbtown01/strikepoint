@@ -2,10 +2,17 @@
 
 using namespace strikepoint;
 
-strikepoint::bail_error::bail_error(const char *file, int line, const char *format, ...) :
+strikepoint::bail_error::bail_error(const char *file,
+                                    int line,
+                                    const std::string &message) :
     _file(file),
     _line(line),
-    std::runtime_error("")
+    std::runtime_error(message)
+{
+}
+
+std::string
+strikepoint::bail_error::format(const char *format, ...)
 {
     char msg_str[4096];
     va_list args;
@@ -14,5 +21,5 @@ strikepoint::bail_error::bail_error(const char *file, int line, const char *form
     vsnprintf(msg_str, sizeof(msg_str), format, args);
     va_end(args);
 
-    _message = std::string(msg_str);
+    return std::string(msg_str);
 }

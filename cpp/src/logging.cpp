@@ -7,9 +7,6 @@
 #include "error.h"
 #include "logging.h"
 
-static const char *LOG_LEVEL_MAP[] = {
-    "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"};
-
 strikepoint::Logger::Logger(const char *log_file_path) :
     _log_file(stdout)
 {
@@ -55,7 +52,7 @@ strikepoint::Logger::log(const char *file_name,
     std::lock_guard<std::mutex> lk(_log_mutex);
     if (_log_file != NULL) {
         fprintf(_log_file, "%s [%s] %s:%d - %s\n",
-                time_str, LOG_LEVEL_MAP[log_level], file_name, line, msg_str);
+                time_str, SPLIB_LOG_LEVEL_NAMES[log_level], file_name, line, msg_str);
         fflush(_log_file);
     } else {
         LogEntry entry;

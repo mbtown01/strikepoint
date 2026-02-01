@@ -14,6 +14,9 @@
 
 using namespace strikepoint;
 
+const char *SPLIB_LOG_LEVEL_NAMES[] = {
+    "DEBUG", "INFO", "WARN", "ERROR", "CRITICAL"};
+
 typedef struct {
     Logger *logger;
     LeptonDriver *driver;
@@ -57,7 +60,6 @@ _errorHandler(SessionData *session,
 int
 SPLIB_Init(SPLIB_SessionHandle *hndl_ptr,
            SPLIB_DriverInfo *info,
-           SPLIB_TemperatureUnit temp_unit,
            const char *log_file_path)
 {
     if (hndl_ptr == NULL)
@@ -70,8 +72,7 @@ SPLIB_Init(SPLIB_SessionHandle *hndl_ptr,
             BAIL("info argument cannot be NULL");
         AudioEngine::config audioConfig;
         AudioEngine::defaults(audioConfig);
-        session->driver =
-            new LeptonDriver(*session->logger, temp_unit, log_file_path);
+        session->driver = new LeptonDriver(*session->logger);
         session->driver->getDriverInfo(info);
         session->pixel_count =
             (size_t) info->frameWidth * (size_t) info->frameHeight;

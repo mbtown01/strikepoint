@@ -21,8 +21,6 @@
 #define FRAME_WIDTH 80
 #define FRAME_HEIGHT 60
 #define PACKET_SIZE (4 + 2 * FRAME_WIDTH)
-#define PACKETS_PER_FRAME FRAME_HEIGHT
-#define LOG_MAX_MESSAGE_LENGTH 4096
 #define SPLIB_VERSION_MAJOR 2
 #define SPLIB_VERSION_MINOR 0
 
@@ -42,26 +40,18 @@
 
 using namespace strikepoint;
 
-class reboot_error : public bail_error {
-  public:
-    reboot_error(const char *file, int line, const char *format, ...) :
-        bail_error(file, line, format)
-    {
-    }
-};
+DECLARE_SPECIALIZED_BAIL_ERROR(retry_error);
+DECLARE_SPECIALIZED_BAIL_ERROR(reboot_error);
 
-#define REBOOT(fmt, ...) \
-    throw reboot_error(__FILE__, __LINE__, fmt, ##__VA_ARGS__)
+#define RETRY(fmt, ...) BAIL_WITH_ERROR(retry_error, fmt, ##__VA_ARGS__)
+#define REBOOT(fmt, ...) BAIL_WITH_ERROR(reboot_error, fmt, ##__VA_ARGS__)
 
 /*********************************************************************
  * LeptonDriver - constructor for the Lepton driver
  *********************************************************************/
-LeptonDriver::LeptonDriver(Logger &logger,
-                           SPLIB_TemperatureUnit temp_unit,
-                           const char *log_file_path) :
+LeptonDriver::LeptonDriver(Logger &logger) :
     _logger(logger),
     _spi_fd(0),
-    _temp_unit(temp_unit),
     _has_frame(false),
     _is_running(false)
 {
@@ -328,83 +318,83 @@ _safeRead(int fd, void *buf, size_t len)
 void
 LeptonDriver::_driverMain()
 {
-    uint8_t raw_buffer[PACKETS_PER_FRAME * PACKET_SIZE];
-    const int pixel_count = FRAME_WIDTH * FRAME_HEIGHT;
-    float local_buffer[pixel_count], prev_buffer[pixel_count];
-    int stale_frame_count = 0;
+    uint8_t raw_buffer[FRAME_HEIGHT * PACKET_SIZE]{};
+    const unsigned int pixel_count = FRAME_HEIGHT * FRAME_WIDTH;
+    float local_buffer[pixel_count]{}, prev_buffer[pixel_count]{};
+    unsigned int retry_count = 0, stale_frame_count = 0;
+    struct timespec ts{};
 
     TIMER_GUARD_BLOCK(_timers["thermal_capture"])
     _is_running.store(true);
     while (_is_running.load()) {
         try {
-            // Read from SPI until we see the start of a frame
+            // Make sure we don't retry forever
+            if (retry_count > 20)
+                REBOOT("too many retries");
+
+            // Read until we see the start of a frame, but reboot if we can't
+            // sync after a reasonable number of attempts
+            unsigned int sync_attempt_count = 0;
             _safeRead(_spi_fd, raw_buffer, PACKET_SIZE);
-            unsigned int attempt_count = 0;
             while ((raw_buffer[0] & 0x0F) != 0 && raw_buffer[1] != 0) {
-                if (attempt_count++ > 100)
+                if (sync_attempt_count++ > 300)
                     REBOOT("trouble syncing frame start");
                 usleep(10000);
                 _safeRead(_spi_fd, raw_buffer, PACKET_SIZE);
             }
 
-            // After seeing the start of a frame, read the rest of the packets
-            for (int p = 1; p < PACKETS_PER_FRAME; p++) {
-                uint8_t *raw_buf = raw_buffer + p * PACKET_SIZE;
-                _safeRead(_spi_fd, raw_buf, PACKET_SIZE);
-                if ((raw_buf[0] & 0x0F) != 0 || raw_buf[1] != p)
-                    REBOOT("bad frame received at (%d/%d)", p, PACKETS_PER_FRAME);
+            // After syncing to the start of a frame, read the remaining packets
+            // into the raw buffer all together (will process them next)
+            for (int r = 1; r < FRAME_HEIGHT; r++) {
+                uint8_t *raw_row = raw_buffer + r * PACKET_SIZE;
+                _safeRead(_spi_fd, raw_row, PACKET_SIZE);
+                if ((raw_row[0] & 0x0F) != 0 || raw_row[1] != r)
+                    RETRY("bad frame received at (%d/%d)", r, FRAME_HEIGHT);
             }
 
-            // Updated the shared frame buffer and signal any waiters
+            // Updated the shared frame buffer with full frame data coming
+            // in 16bit values in centiKelvin, convert to float degF
             bool matches_last_frame = true;
-            for (int r = 0; r < FRAME_HEIGHT; ++r) {
-                uint8_t *raw_row = raw_buffer + (r * PACKET_SIZE + 4);
+            for (int r = 0; r < FRAME_HEIGHT; r++) {
+                uint8_t *raw_ptr = raw_buffer + r * PACKET_SIZE + 4;
                 float *out_row = local_buffer + r * FRAME_WIDTH;
                 float *prev_row = prev_buffer + r * FRAME_WIDTH;
                 for (int c = 0; c < FRAME_WIDTH; ++c) {
-                    uint16_t v = ((uint16_t) raw_row[2 * c] << 8) | raw_row[2 * c + 1];
-                    float k = v * 0.01f;
-                    out_row[c] = k;
-                    matches_last_frame &= (prev_row[c] == k);
-                    prev_row[c] = k;
+                    uint16_t v = ((uint16_t) raw_ptr[0] << 8) | raw_ptr[1];
+                    float f = (v * 0.01f - 273.15f) * 9.0f / 5.0f + 32.0f;
+                    matches_last_frame &= (prev_row[c] == f);
+                    out_row[c] = prev_row[c] = f;
+                    raw_ptr += 2;
                 }
             }
 
-            // Every now and then, we see the camera start to return the same
-            // frame over and over again.  If we see that happening for roughly
-            // a full second, reboot the camera
+            // Check for frames not changing over ~1s of capture
             if (matches_last_frame && stale_frame_count++ > 27)
-                REBOOT("stale frames detected");
+                REBOOT("stale frame detected");
 
-            // Only wake up a getFrame caller if this frame is unique
+            // We receive frames at ~27hz, but new data is at every 3rd frame,
+            // so only update consumers when we see changes
             if (!matches_last_frame) {
-                if (_temp_unit == SPLIB_TEMP_UNITS_CELCIUS)
-                    for (int i = 0; i < pixel_count; ++i)
-                        local_buffer[i] -= 273.15f;
-                if (_temp_unit == SPLIB_TEMP_UNITS_FAHRENHEIT)
-                    for (int i = 0; i < pixel_count; ++i)
-                        local_buffer[i] = (local_buffer[i] - 273.15f) * 9.0f / 5.0f + 32.0f;
-
-                struct timespec ts;
-                clock_gettime(CLOCK_MONOTONIC, &ts);
-                uint64_t t = (uint64_t) ts.tv_sec * 1000000000 + (uint64_t) ts.tv_nsec;
-
                 std::lock_guard<std::mutex> lk(_frame_mutex);
+                clock_gettime(CLOCK_MONOTONIC, &ts);
                 memcpy(&(_frame_info.buffer[0]), local_buffer, sizeof(local_buffer));
                 _frame_info.event_id++;
-                _frame_info.t_ns = t;
+                _frame_info.t_ns = (uint64_t) ts.tv_sec * 1000000000 + (uint64_t) ts.tv_nsec;
                 _has_frame.store(true);
                 _frame_cond.notify_one();
                 stale_frame_count = 0;
+                retry_count = 0;
             }
-
+        } catch (const retry_error &e) {
+            LOG_WARNING(_logger, "RETRYING due to %s", e.what());
+            usleep(50000);
+            retry_count++;
         } catch (const reboot_error &e) {
-            char msg[2048];
-            snprintf(msg, sizeof(msg), "REBOOTING due to %s", e.what());
-            LOG_WARNING(_logger, msg);
+            LOG_ERROR(_logger, "REBOOTING due to %s", e.what());
             cameraDisable();
             cameraEnable();
-            stale_frame_count = 0;
+            memset(prev_buffer, 0, sizeof(prev_buffer));
+            retry_count = 0;
         }
     }
 

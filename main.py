@@ -14,6 +14,10 @@ from strikepoint.dash.app import StrikePointDashApp, FrameInfoProvider
 from strikepoint.frames import FrameInfo, FrameInfoReader
 from strikepoint.driver import SplibDriver
 
+msgQueue = Queue()
+setupLogging(msgQueue=msgQueue)
+logger = getLogger("strikepoint")
+
 
 IMAGE_WIDTH = 320
 IMAGE_HEIGHT = 240
@@ -35,6 +39,7 @@ class FileBasedFrameInfoProvider(FrameInfoProvider):
             self.reader.rewind()
             frameInfo = self.reader.readFrameInfo()
             self.lastFrameTimestamp = None
+            logger.debug("Rewound recording file")
         if self.lastFrameTimestamp is None:
             self.lastFrameTimestamp = frameInfo.timestamp
             self.lastLocalTimestamp = monotonic()
@@ -55,7 +60,6 @@ class DeviceBasedFrameInfoProvider(FrameInfoProvider):
         self.picamera = Picamera2()
         self.picamera.start()
         self.splibDriver = SplibDriver(None)
-        self.splibDriver.startPolling()
 
     def getFrameInfo(self):
         frameInfo = FrameInfo(monotonic())
@@ -91,11 +95,7 @@ class DeviceBasedFrameInfoProvider(FrameInfoProvider):
         frameInfo.rgbFrames['visual'] = frame
 
         audioStrikeEvents = self.splibDriver.getAudioStrikeEvents()
-        frameInfo.metadata['leptonEventId'] = frameWithMetadata['eventId']
-        frameInfo.metadata['leptonTimestampNs'] = frameWithMetadata['timestamp_ns']
         frameInfo.metadata['audioStrikeDetected'] = len(audioStrikeEvents) > 0
-        frameInfo.metadata['audioStrikeTimestampNs'] = \
-            max(audioStrikeEvents) if len(audioStrikeEvents) > 0 else None
 
         return frameInfo
 
@@ -108,10 +108,7 @@ if __name__ == "__main__":
         help="use a file-based recording instead of live camera inputs")
     args = parser.parse_args()
 
-    msgQueue = Queue()
-    setupLogging(msgQueue=msgQueue)
-    logger = getLogger("strikepoint")
-    logger.info("Starting main-rpi.py")
+    logger.info("Starting StrikePoint Dash App")
 
     getLogger('werkzeug').setLevel('WARNING')
     getLogger('picamera2').setLevel('WARNING')

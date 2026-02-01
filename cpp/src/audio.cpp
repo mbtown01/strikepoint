@@ -74,7 +74,7 @@ AudioEngine::defaults(AudioEngine::config &cfg)
 }
 
 void
-AudioEngine::_captureLoop(iirfilt_rrrf hp)
+AudioEngine::_captureLoop(iirfilt_rrrf &hp)
 {
     // BUFFER SETUP
     // frameSize = number of samples per processing block provided by the source.
@@ -146,8 +146,6 @@ AudioEngine::_captureLoop(iirfilt_rrrf hp)
             _queue.push(e);
         }
     }
-
-    iirfilt_rrrf_destroy(hp);
 }
 
 void

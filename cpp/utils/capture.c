@@ -83,7 +83,7 @@ main(int argc, char *argv[])
 
     SPLIB_DriverInfo driverInfo;
     SPLIB_SessionHandle hndl;
-    if (0 != SPLIB_Init(&hndl, &driverInfo, SPLIB_TEMP_UNITS_FAHRENHEIT, "stdout")) {
+    if (0 != SPLIB_Init(&hndl, &driverInfo, "stdout")) {
         fprintf(stderr, "Error initializing Lepton driver\n");
         exit(1);
     }
@@ -102,8 +102,6 @@ main(int argc, char *argv[])
     int logHasEntries = 0;
     uint32_t eventId;
     uint64_t timestamp_ns;
-    static const char *LOG_LEVEL_MAP[] = {
-        "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"};
 
     CRC16 crcOld = 0;
     for (int i = 0; i < frames; i++) {
@@ -111,7 +109,7 @@ main(int argc, char *argv[])
         while (logHasEntries) {
             SPLIB_LogGetNextEntry(
                 hndl, &level, logBuffer, sizeof(logBuffer));
-            printf("LOG [%s]: %s\n", LOG_LEVEL_MAP[level], logBuffer);
+            printf("LOG [%s]: %s\n", SPLIB_LOG_LEVEL_NAMES[level], logBuffer);
             SPLIB_LogHasEntries(hndl, &logHasEntries);
         }
 
@@ -150,7 +148,7 @@ main(int argc, char *argv[])
     while (logHasEntries) {
         SPLIB_LogGetNextEntry(
             hndl, &level, logBuffer, sizeof(logBuffer));
-        printf("FINAL [%s]: %s\n", LOG_LEVEL_MAP[level], logBuffer);
+        printf("FINAL [%s]: %s\n", SPLIB_LOG_LEVEL_NAMES[level], logBuffer);
         SPLIB_LogHasEntries(hndl, &logHasEntries);
     }
 

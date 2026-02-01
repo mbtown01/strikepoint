@@ -60,7 +60,7 @@ class AudioEngine {
 
   private:
     // capture loop and helpers (camelCase names)
-    void _captureLoop(iirfilt_rrrf hp);
+    void _captureLoop(iirfilt_rrrf &hp);
 
   private:
     IAudioSource &_source;

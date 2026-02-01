@@ -6,7 +6,7 @@ extern "C" {
 
 TEST(DriverApi, InitNullArgs)
 {
-    int rc = SPLIB_Init(NULL, NULL, SPLIB_TEMP_UNITS_FAHRENHEIT, NULL);
+    int rc = SPLIB_Init(NULL, NULL, NULL);
     EXPECT_EQ(rc, -2);
 }
 
@@ -38,13 +38,28 @@ TEST(DriverApi, CameraDisableNullHandle)
     EXPECT_EQ(rc, -2);
 }
 
+void _drainLogEntries(SPLIB_SessionHandle hndl)
+{
+    int logHasEntries = false;
+    SPLIB_LogLevel level;
+    char logBuffer[4096];
+
+    SPLIB_LogHasEntries(hndl, &logHasEntries);
+    while (logHasEntries) {
+        SPLIB_LogGetNextEntry(
+            hndl, &level, logBuffer, sizeof(logBuffer));
+        printf("LOG [%s]: %s\n", SPLIB_LOG_LEVEL_NAMES[level], logBuffer);
+        SPLIB_LogHasEntries(hndl, &logHasEntries);
+    }
+}
+
 TEST(DriverApi, SimpleFramePoll)
 {
     SPLIB_SessionHandle hndl;
     SPLIB_DriverInfo info;
     int rc;
 
-    rc = SPLIB_Init(&hndl, &info, SPLIB_TEMP_UNITS_FAHRENHEIT, NULL);
+    rc = SPLIB_Init(&hndl, &info, NULL);
     EXPECT_EQ(rc, 0);
 
     const size_t pixel_count = info.frameWidth * info.frameHeight;
@@ -54,6 +69,7 @@ TEST(DriverApi, SimpleFramePoll)
     rc = SPLIB_LeptonGetFrame(hndl, buffer, pixel_count, &event_id, &timestamp_ns);
     EXPECT_EQ(rc, 0);
 
+    _drainLogEntries(hndl);
     rc = SPLIB_Shutdown(hndl);
     EXPECT_EQ(rc, 0);
 }
@@ -64,7 +80,7 @@ TEST(DriverApi, RecoveryFramePollOnStartup)
     SPLIB_DriverInfo info;
     int rc;
 
-    rc = SPLIB_Init(&hndl, &info, SPLIB_TEMP_UNITS_FAHRENHEIT, NULL);
+    rc = SPLIB_Init(&hndl, &info, NULL);
     EXPECT_EQ(rc, 0);
 
     rc = SPLIB_LeptonDisable(hndl);
@@ -77,6 +93,7 @@ TEST(DriverApi, RecoveryFramePollOnStartup)
     rc = SPLIB_LeptonGetFrame(hndl, buffer, pixel_count, &event_id, &timestamp_ns);
     EXPECT_EQ(rc, 0);
 
+    _drainLogEntries(hndl);
     rc = SPLIB_Shutdown(hndl);
     EXPECT_EQ(rc, 0);
 }

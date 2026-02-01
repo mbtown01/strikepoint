@@ -22,14 +22,12 @@ class LeptonDriver {
   public:
     typedef struct {
         uint64_t t_ns;             // CLOCK_MONOTONIC timestamp
-        std::vector<float> buffer; // pointer to frame buffer
         uint32_t event_id;         // increments each frame
+        std::vector<float> buffer; // pointer to frame buffer (in degF)
     } frameInfo;
 
   public:
-    LeptonDriver(strikepoint::Logger &logger,
-                 SPLIB_TemperatureUnit temp_unit,
-                 const char *log_file_path);
+    LeptonDriver(strikepoint::Logger &logger);
 
     ~LeptonDriver();
 
@@ -53,7 +51,6 @@ class LeptonDriver {
     std::atomic<bool> _is_running;
     std::map<std::string, Timer> _timers;
     strikepoint::Logger &_logger;
-    SPLIB_TemperatureUnit _temp_unit;
     frameInfo _frame_info;
     int _spi_fd;
 };

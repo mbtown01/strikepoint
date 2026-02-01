@@ -8,6 +8,9 @@ from dash.dependencies import Input, Output, State
 from threading import Lock, Thread, Condition
 from queue import Queue
 from logging import getLogger
+import cProfile
+import atexit
+import signal
 
 from strikepoint.database import Database
 from strikepoint.frames import FrameInfoWriter, FrameInfo
@@ -44,12 +47,11 @@ class StrikePointDashApp:
         self.eventQueueManager = DashEventQueueManager(self.app)
         self.strikeDetectionEngine = StrikeDetectionEngine()
         self.database = Database()
-        self.driverThread = Thread(target=self._threadMain, daemon=True)
+        self.cameraThread = Thread(target=self._cameraThreadMain, daemon=True)
+        self.driverThread = Thread(target=self._driverThreadMain, daemon=True)
         self.frameWriter = None
         self.frameWriterLock = Lock()
         self.thermalVisualTransform = self.database.loadLatestTransform()
-        self.strikeMetricsDf = pd.DataFrame(
-            columns=["time", "tempAvg", "tempDelta"])
         self.logMessages = []
         self.msgQueue = msgQueue
         self.calibrationUi = CalibrationDashUi(
@@ -71,10 +73,6 @@ class StrikePointDashApp:
         self.eventQueueManager.registerEvent(
             'update-log-entries', self._updateLogEntriesHandler,
             [("log-content-div", "children")])
-        self.eventQueueManager.registerEvent(
-            'update-strike-time-series-graph',
-            self._updateStrikeTimeSeriesGraphHandler,
-            [("strike-time-series-graph", "figure")], needsEventData=False)
 
         self.driverThread.start()
 
@@ -85,8 +83,6 @@ class StrikePointDashApp:
         def detect_reload(data):
             if data is None:
                 self.eventQueueManager.fireEvent('update-calibration-status')
-                self.eventQueueManager.fireEvent(
-                    'update-strike-time-series-graph')
 
         @self.app.callback(Input("calibrate-btn", "n_clicks"),
                            prevent_initial_call=True)
@@ -108,7 +104,7 @@ class StrikePointDashApp:
                         self.frameWriter.close()
                         self.frameWriter = None
                         return "Start Recording"
-            except Exception as ex:
+            except Exception:
                 return "Start Recording"
 
         @self.app.callback(
@@ -117,7 +113,7 @@ class StrikePointDashApp:
         )
         def render_page(pathname):
             if pathname == "/":
-                return self.strikeDiv
+                return self.loggingDiv
             elif pathname == "/logs":
                 return self.loggingDiv
             elif pathname == "/history":
@@ -228,18 +224,6 @@ class StrikePointDashApp:
             style={"padding": "8px"}
         )
 
-        self.strikeDiv = html.Div([
-            html.H4("Strike Detection", style={"color": "white"}),
-            dcc.Graph(
-                id="strike-time-series-graph",
-                config={"displayModeBar": False},
-                style={"height": "40vh", "width": "100%"}
-            ),
-        ],
-            id="strike-div",
-            style={"padding": "8px"}
-        )
-
         self.app.layout = html.Div([
             *self.eventQueueManager.getFinalElements(),
             dcc.Store(id="strikepoint-session-store", storage_type="session"),
@@ -247,7 +231,6 @@ class StrikePointDashApp:
             self.calibrationUi.modal,
             self.navbar,
             html.Div(
-                self.strikeDiv,
                 id="page-content",
                 style={"position": "relative", "height": "100vh"}
             ),
@@ -291,43 +274,16 @@ class StrikePointDashApp:
         self.eventQueueManager.fireEvent('add-history-card', card)
         self.eventQueueManager.fireEvent('update-calibration-status')
 
-    def _updateStrikeTimeSeriesGraphHandler(self, figure):
-        # Update the strike metrics DataFrame
-        windowSize = 60*9
+    def _cameraThreadMain(self):
+        pass
 
-        # Create updated figure with a second y-axis for tempDelta
-        fig = px.line(
-            self.strikeMetricsDf[-windowSize:],
-            x="time",
-            y=["tempAvg", "tempDelta"],
-            labels={
-                "tempAvg": "average temperature",
-                "tempDelta": "temperature delta",
-                "time": "time",
-            },
-            title="Thermal Trends",
-            template="plotly_dark",
-        )
 
-        if len(self.strikeMetricsDf) > windowSize*2:
-            self.strikeMetricsDf = self.strikeMetricsDf.tail(windowSize)
-
-        # assign tempDelta trace to a secondary y-axis (y2)
-        for tr in fig.data:
-            if tr.name == "tempDelta":
-                tr.yaxis = "y2"
-
-        fig.update_layout(
-            yaxis=dict(title="average temperature"),
-            yaxis2=dict(title="temperature delta",
-                        overlaying="y", side="right"),
-            legend_title_text="",
-        )
-        return fig
-
-    def _threadMain(self):
+    def _driverThreadMain(self):
         frameSeq = 0
-        lastAvgTemp, avgTemp = None, None
+
+        # prof = cProfile.Profile()
+        # prof.enable()
+        # profPath = "strikepoint-driver.prof"
 
         while True:
             try:
@@ -345,19 +301,10 @@ class StrikePointDashApp:
                     rtn = self.msgQueue.get_nowait()
                     self.eventQueueManager.fireEvent('update-log-entries', rtn)
 
-                avgTemp = frameInfo.rawFrames['thermal'].mean()
-                if lastAvgTemp is not None:
-                    self.strikeMetricsDf = pd.concat(
-                        [self.strikeMetricsDf,
-                         pd.DataFrame([{
-                             "time": pd.Timestamp.now(),
-                             "tempDelta": avgTemp - lastAvgTemp,
-                             "tempAvg": avgTemp}])],
-                        ignore_index=True)
-                lastAvgTemp = avgTemp
-                if frameSeq % 2 == 0:
-                    self.eventQueueManager.fireEvent(
-                        'update-strike-time-series-graph')
+                # if frameSeq % (9*60) == 0:
+                #     prof.dump_stats(profPath)
+                #     logger.info(
+                #         f"Driver thread {frameSeq} profile written to {profPath}")
 
                 self.calibrationUi.process(frameSeq, frameInfo)
 

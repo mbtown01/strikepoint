@@ -2,7 +2,7 @@
 cpp/Release
 cpp/Debug
 perf.data
-profile.prof
+*.prof
 *.log
 *.db
 *.bin

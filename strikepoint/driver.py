@@ -4,18 +4,11 @@ import ctypes.util
 import numpy as np
 
 from logging import DEBUG, INFO, WARNING, ERROR, CRITICAL
-from enum import IntEnum
-from time import time
 
 
 class SplibDriver:
     """ctypes wrapper around SPLIB_* functions from the C driver.
     """
-    class TemperatureUnit(IntEnum):
-        KELVIN = 0
-        CELCIUS = 1
-        FAHRENHEIT = 2
-
     class SPLIB_DriverInfo(ctypes.Structure):
         _fields_ = [
             ("versionMajor", ctypes.c_uint8),
@@ -53,7 +46,6 @@ class SplibDriver:
         self.fnMap["SPLIB_Init"].argtypes = [
             ctypes.POINTER(ctypes.c_void_p),
             ctypes.POINTER(SplibDriver.SPLIB_DriverInfo),
-            ctypes.c_int,
             ctypes.c_char_p]
         self.fnMap["SPLIB_LeptonGetFrame"].argtypes = [
             ctypes.c_void_p, ctypes.POINTER(ctypes.c_float),
@@ -72,7 +64,6 @@ class SplibDriver:
         self.hndl = ctypes.c_void_p()
         rc = self.fnMap["SPLIB_Init"](
             ctypes.byref(self.hndl), ctypes.byref(info),
-            ctypes.c_int(SplibDriver.TemperatureUnit.FAHRENHEIT),
             ctypes.c_char_p(logPath.encode('utf8') if logPath else None))
         if rc != 0:
             raise RuntimeError(f"SPLIB_Init failed rc={rc}")

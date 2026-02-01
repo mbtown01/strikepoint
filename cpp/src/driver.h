@@ -19,22 +19,18 @@ typedef struct {
 } SPLIB_DriverInfo;
 
 typedef enum {
-    SPLIB_TEMP_UNITS_KELVIN = 0,
-    SPLIB_TEMP_UNITS_CELCIUS,
-    SPLIB_TEMP_UNITS_FAHRENHEIT
-} SPLIB_TemperatureUnit;
-
-typedef enum {
     SPLIB_LOG_LEVEL_DEBUG = 0,
     SPLIB_LOG_LEVEL_INFO,
     SPLIB_LOG_LEVEL_WARN,
-    SPLIB_LOG_LEVEL_ERROR
+    SPLIB_LOG_LEVEL_ERROR,
+    SPLIB_LOG_LEVEL_CRITICAL
 } SPLIB_LogLevel;
+
+extern const char *SPLIB_LOG_LEVEL_NAMES[];
 
 // Create a new session
 int SPLIB_Init(SPLIB_SessionHandle *hndl_ptr,
                SPLIB_DriverInfo *info,
-               SPLIB_TemperatureUnit temp_unit,
                const char *log_file_path);
 
 // disable the camera and put it into power down mode
@@ -43,7 +39,7 @@ int SPLIB_LeptonDisable(SPLIB_SessionHandle hndl);
 // enable the camera
 int SPLIB_LeptonEnable(SPLIB_SessionHandle hndl);
 
-// Gets the next (raw) frame of data from the device in degC (or degF)
+// Gets the next (raw) frame of data from the device in degC
 int SPLIB_LeptonGetFrame(SPLIB_SessionHandle hndl,
                          float *buffer,
                          size_t buffer_size,

@@ -205,13 +205,6 @@ class StrikeDetectionEngine:
         self.observedSeq = list()
 
     def detectStrike(self, frameInfo: dict, thermalVisualTransform: np.ndarray):
-        # visCircles = list()
-        # visCircles = findBrightestVisualCircles(frameInfo.rgbFrames['visual'])
-        # foundSingleCircle = len(visCircles) == 1
-        # visCircle = visCircles[0] if foundSingleCircle else None
-        # audioStrikeDetected = frameInfo.metadata.get(
-        #     'audioStrikeDetected', False)
-
         self.observedSeq.append((frameInfo, frameInfo.metadata.get(
             'audioStrikeDetected', False)))
 
