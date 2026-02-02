@@ -9,6 +9,7 @@
 #include "audio-pcm.h"
 #include "driver.h"
 #include "error.h"
+#include "lepton-hardware.h"
 #include "lepton.h"
 #include "timer.h"
 
@@ -19,6 +20,7 @@ const char *SPLIB_LOG_LEVEL_NAMES[] = {
 
 typedef struct {
     Logger *logger;
+    LeptonHardwareImpl *lepton_hardware_impl;
     LeptonDriver *driver;
     PcmAudioSource *source;
     AudioEngine *audio_engine;
@@ -72,7 +74,10 @@ SPLIB_Init(SPLIB_SessionHandle *hndl_ptr,
             BAIL("info argument cannot be NULL");
         AudioEngine::config audioConfig;
         AudioEngine::defaults(audioConfig);
-        session->driver = new LeptonDriver(*session->logger);
+        session->lepton_hardware_impl =
+            new LeptonHardwareImpl(*(session->logger));
+        session->driver = new LeptonDriver(
+            *session->logger, *session->lepton_hardware_impl);
         session->driver->getDriverInfo(info);
         session->pixel_count =
             (size_t) info->frameWidth * (size_t) info->frameHeight;
@@ -81,24 +86,6 @@ SPLIB_Init(SPLIB_SessionHandle *hndl_ptr,
         session->audio_engine = new AudioEngine(
             *(session->logger), *(session->source), audioConfig);
         *hndl_ptr = (SPLIB_SessionHandle) session;
-    });
-}
-
-int
-SPLIB_LeptonDisable(SPLIB_SessionHandle hndl)
-{
-    SessionData *session = static_cast<SessionData *>(hndl);
-    return _errorHandler(session, __func__, [=]() {
-        session->driver->cameraDisable();
-    });
-}
-
-int
-SPLIB_LeptonEnable(SPLIB_SessionHandle hndl)
-{
-    SessionData *session = static_cast<SessionData *>(hndl);
-    return _errorHandler(session, __func__, [=]() {
-        session->driver->cameraEnable();
     });
 }
 

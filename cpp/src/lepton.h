@@ -4,11 +4,8 @@
 #include <condition_variable>
 #include <map>
 #include <mutex>
-#include <queue>
 #include <string>
 #include <thread>
-#include <time.h>
-#include <vector>
 
 #include "LEPTON_Types.h"
 #include "driver.h"
@@ -26,24 +23,28 @@ class LeptonDriver {
         std::vector<float> buffer; // pointer to frame buffer (in degF)
     } frameInfo;
 
-  public:
-    LeptonDriver(strikepoint::Logger &logger);
+  class ILeptonImpl {
+    public:
+      virtual ~ILeptonImpl() = default;
 
+      virtual void cameraEnable() = 0;
+      virtual void cameraDisable() = 0;
+      virtual int spiFd() = 0;
+  };
+
+  public:
+    LeptonDriver(strikepoint::Logger &logger, ILeptonImpl &impl);
     ~LeptonDriver();
 
-    void getDriverInfo(SPLIB_DriverInfo *info);
-
     void cameraDisable();
-
     void cameraEnable();
-
+    void getDriverInfo(SPLIB_DriverInfo *info);
     void getFrame(frameInfo &frame_info);
 
   private:
     void _driverMain();
 
   private:
-    LEP_CAMERA_PORT_DESC_T _port_desc;
     std::thread _thread;
     std::mutex _frame_mutex;
     std::condition_variable _frame_cond;
@@ -52,7 +53,7 @@ class LeptonDriver {
     std::map<std::string, Timer> _timers;
     strikepoint::Logger &_logger;
     frameInfo _frame_info;
-    int _spi_fd;
+    ILeptonImpl &_impl;
 };
 
 } // namespace strikepoint

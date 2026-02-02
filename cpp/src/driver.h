@@ -33,12 +33,6 @@ int SPLIB_Init(SPLIB_SessionHandle *hndl_ptr,
                SPLIB_DriverInfo *info,
                const char *log_file_path);
 
-// disable the camera and put it into power down mode
-int SPLIB_LeptonDisable(SPLIB_SessionHandle hndl);
-
-// enable the camera
-int SPLIB_LeptonEnable(SPLIB_SessionHandle hndl);
-
 // Gets the next (raw) frame of data from the device in degC
 int SPLIB_LeptonGetFrame(SPLIB_SessionHandle hndl,
                          float *buffer,

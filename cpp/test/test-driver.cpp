@@ -27,17 +27,6 @@ TEST(DriverApi, ShutdownNullHandle)
     EXPECT_EQ(rc, -2);
 }
 
-TEST(DriverApi, CameraEnableNullHandle)
-{
-    int rc = SPLIB_LeptonEnable(NULL);
-    EXPECT_EQ(rc, -2);
-}
-TEST(DriverApi, CameraDisableNullHandle)
-{
-    int rc = SPLIB_LeptonDisable(NULL);
-    EXPECT_EQ(rc, -2);
-}
-
 void _drainLogEntries(SPLIB_SessionHandle hndl)
 {
     int logHasEntries = false;
@@ -81,9 +70,6 @@ TEST(DriverApi, RecoveryFramePollOnStartup)
     int rc;
 
     rc = SPLIB_Init(&hndl, &info, NULL);
-    EXPECT_EQ(rc, 0);
-
-    rc = SPLIB_LeptonDisable(hndl);
     EXPECT_EQ(rc, 0);
 
     const size_t pixel_count = info.frameWidth * info.frameHeight;

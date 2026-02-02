@@ -27,7 +27,6 @@ class SplibDriver:
 
     allFnNameList = [
         "SPLIB_Shutdown", "SPLIB_Init", "SPLIB_LeptonGetFrame",
-        "SPLIB_LeptonDisable",
         "SPLIB_LogGetNextEntry", "SPLIB_LogHasEntries",
         "SPLIB_GetAudioStrikeEvents"]
 
@@ -128,11 +127,6 @@ class SplibDriver:
             "SPLIB_GetAudioStrikeEvents", eventsBuffer,
             ctypes.c_size_t(bufferLen), ctypes.byref(numEvents))
         return [eventsBuffer[i] for i in range(numEvents.value)]
-
-    def cameraDisable(self):
-        """Disable the camera.
-        """
-        self._makeApiCall("SPLIB_LeptonDisable")
 
     @staticmethod
     def find_library_path(name_hint="libstrikepoint.so"):

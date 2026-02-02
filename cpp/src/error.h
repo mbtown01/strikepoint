@@ -33,6 +33,6 @@ class bail_error : public std::runtime_error {
     throw _error_name(                         \
         __FILE__, __LINE__, strikepoint::bail_error::format(fmt, ##__VA_ARGS__));
 
-#define BAIL(fmt, ...) BAIL_WITH_ERROR(bail_error, fmt, ##__VA_ARGS__)
+#define BAIL(fmt, ...) BAIL_WITH_ERROR(strikepoint::bail_error, fmt, ##__VA_ARGS__)
 
 } // namespace strikepoint

@@ -22,16 +22,6 @@ class LeptonDriverTests(unittest.TestCase):
         self.assertIsInstance(info["frame"], np.ndarray)
         self.assertEqual(info["frame"].shape, (60, 80))
 
-    def test_disabled_frame(self):
-        self.splibDriver.cameraDisable()
-        info = self.splibDriver.getFrameWithMetadata()
-        self.assertIsInstance(info, dict)
-        self.assertIn("frame", info)
-        self.assertIn("eventId", info)
-        self.assertIn("timestamp_ns", info)
-        self.assertIsInstance(info["frame"], np.ndarray)
-        self.assertEqual(info["frame"].shape, (60, 80))
-
     def test_memory_logging(self):
         # Generate some log entries
         self.splibDriver.getFrameWithMetadata()
