@@ -84,7 +84,7 @@ AudioEngine::_captureLoop(iirfilt_rrrf &hp)
     // Detector state
     float noise = 0.0f;     // running noise floor estimate (smoothed RMS)
     uint64_t lastHit = 0;   // last detected event timestamp (ns)
-    uint32_t eventId = 0;   // monotonically increasing event id
+    uint32_t eventSeq = 0;   // monotonically increasing event id
     AudioEngine::event e{}; // reused event struct to push into queue
 
     // Main capture/detection loop:
@@ -138,7 +138,7 @@ AudioEngine::_captureLoop(iirfilt_rrrf &hp)
             e.rms = rms;
             // e.peakiness = peakiness;
             // e.score = rms * peakiness; // composite score for ranking
-            e.event_id = ++eventId;
+            e.event_seq = ++eventSeq;
 
             std::lock_guard<std::mutex> lk(_mtx);
             if (_queue.size() >= _cfg.queue_size)

@@ -53,9 +53,9 @@ TEST(DriverApi, SimpleFramePoll)
 
     const size_t pixel_count = info.frameWidth * info.frameHeight;
     float buffer[pixel_count];
-    uint32_t event_id;
+    uint32_t frame_seq;
     uint64_t timestamp_ns;
-    rc = SPLIB_LeptonGetFrame(hndl, buffer, pixel_count, &event_id, &timestamp_ns);
+    rc = SPLIB_LeptonGetFrame(hndl, buffer, pixel_count, &frame_seq, &timestamp_ns);
     EXPECT_EQ(rc, 0);
 
     _drainLogEntries(hndl);
@@ -74,9 +74,9 @@ TEST(DriverApi, RecoveryFramePollOnStartup)
 
     const size_t pixel_count = info.frameWidth * info.frameHeight;
     float buffer[pixel_count];
-    uint32_t event_id;
+    uint32_t frame_seq;
     uint64_t timestamp_ns;
-    rc = SPLIB_LeptonGetFrame(hndl, buffer, pixel_count, &event_id, &timestamp_ns);
+    rc = SPLIB_LeptonGetFrame(hndl, buffer, pixel_count, &frame_seq, &timestamp_ns);
     EXPECT_EQ(rc, 0);
 
     _drainLogEntries(hndl);

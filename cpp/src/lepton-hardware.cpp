@@ -167,3 +167,9 @@ strikepoint::LeptonHardwareImpl::cameraDisable()
         usleep(250000);
     } while (rtn != LEP_OK || statusDesc.camStatus != LEP_SYSTEM_READY);
 }
+
+void
+strikepoint::LeptonHardwareImpl::spiRead(void *buf, size_t len)
+{
+    safeRead(_spi_fd, buf, len);
+}

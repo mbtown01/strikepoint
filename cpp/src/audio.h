@@ -28,7 +28,7 @@ class AudioEngine {
         float score;       // composite score (rms * peakiness)
         float rms;         // rms of high-pass signal
         float peakiness;   // peak/rms
-        uint32_t event_id; // increments each hit
+        uint32_t event_seq; // increments each hit
     } event;
 
     class IAudioSource {

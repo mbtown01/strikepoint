@@ -11,7 +11,7 @@ class LeptonHardwareImpl : public LeptonDriver::ILeptonImpl {
 
     void cameraEnable() override;
     void cameraDisable() override;
-    int spiFd() override { return _spi_fd; }
+    void spiRead(void *buf, size_t len) override;
 
   private:
     LEP_CAMERA_PORT_DESC_T _port_desc;

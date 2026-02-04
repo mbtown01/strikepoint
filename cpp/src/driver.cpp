@@ -140,15 +140,15 @@ int
 SPLIB_LeptonGetFrame(SPLIB_SessionHandle hndl,
                      float *buffer,
                      size_t buffer_size,
-                     uint32_t *event_id,
+                     uint32_t *frame_seq,
                      uint64_t *timestamp_ns)
 {
     SessionData *session = static_cast<SessionData *>(hndl);
     return _errorHandler(session, __func__, [=]() {
         if (buffer == NULL)
             BAIL("buffer argument cannot be NULL");
-        if (event_id == NULL)
-            BAIL("event_id argument cannot be NULL");
+        if (frame_seq == NULL)
+            BAIL("frame_seq argument cannot be NULL");
         if (timestamp_ns == NULL)
             BAIL("timestamp_ns argument cannot be NULL");
         if (buffer_size < session->pixel_count)
@@ -156,7 +156,7 @@ SPLIB_LeptonGetFrame(SPLIB_SessionHandle hndl,
                  session->pixel_count, buffer_size);
         LeptonDriver::frameInfo frameInfo;
         session->driver->getFrame(frameInfo);
-        *event_id = frameInfo.event_id;
+        *frame_seq = frameInfo.frame_seq;
         *timestamp_ns = frameInfo.t_ns;
         memcpy(buffer, &frameInfo.buffer[0],
                sizeof(float) * session->pixel_count);

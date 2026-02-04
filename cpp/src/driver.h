@@ -37,7 +37,7 @@ int SPLIB_Init(SPLIB_SessionHandle *hndl_ptr,
 int SPLIB_LeptonGetFrame(SPLIB_SessionHandle hndl,
                          float *buffer,
                          size_t buffer_size,
-                         uint32_t *event_id,
+                         uint32_t *frame_seq,
                          uint64_t *timestamp_ns);
 
 // Check if there are log entries available
