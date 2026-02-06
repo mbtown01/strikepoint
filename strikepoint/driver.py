@@ -28,7 +28,7 @@ class SplibDriver:
     allFnNameList = [
         "SPLIB_Shutdown", "SPLIB_Init", "SPLIB_LeptonGetFrame",
         "SPLIB_LogGetNextEntry", "SPLIB_LogHasEntries",
-        "SPLIB_GetAudioStrikeEvents"]
+        "SPLIB_AudioGetEvents"]
 
     def __init__(self, logPath: str = None):
         libPath = SplibDriver.find_library_path()
@@ -55,7 +55,7 @@ class SplibDriver:
             ctypes.c_size_t]
         self.fnMap["SPLIB_LogHasEntries"].argtypes = [
             ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)]
-        self.fnMap["SPLIB_GetAudioStrikeEvents"].argtypes = [
+        self.fnMap["SPLIB_AudioGetEvents"].argtypes = [
             ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint64),
             ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]
 
@@ -124,7 +124,7 @@ class SplibDriver:
         numEvents = ctypes.c_size_t(0)
         eventsBuffer = (ctypes.c_uint64 * bufferLen)()
         self._makeApiCall(
-            "SPLIB_GetAudioStrikeEvents", eventsBuffer,
+            "SPLIB_AudioGetEvents", eventsBuffer,
             ctypes.c_size_t(bufferLen), ctypes.byref(numEvents))
         return [eventsBuffer[i] for i in range(numEvents.value)]
 

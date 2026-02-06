@@ -25,9 +25,7 @@ class AudioEngine {
 
     typedef struct {
         uint64_t t_ns;     // CLOCK_MONOTONIC timestamp
-        float score;       // composite score (rms * peakiness)
         float rms;         // rms of high-pass signal
-        float peakiness;   // peak/rms
         uint32_t event_seq; // increments each hit
     } event;
 

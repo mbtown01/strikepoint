@@ -119,7 +119,7 @@ strikepoint::LeptonHardwareImpl::~LeptonHardwareImpl()
 }
 
 void
-strikepoint::LeptonHardwareImpl::cameraEnable()
+strikepoint::LeptonHardwareImpl::_camera_enable()
 {
     LEP_STATUS_T statusDesc;
     LEP_RESULT rtn;
@@ -150,7 +150,7 @@ strikepoint::LeptonHardwareImpl::cameraEnable()
 }
 
 void
-strikepoint::LeptonHardwareImpl::cameraDisable()
+strikepoint::LeptonHardwareImpl::_camera_disable()
 {
     LEP_STATUS_T statusDesc;
     LEP_RESULT rtn;
@@ -169,7 +169,23 @@ strikepoint::LeptonHardwareImpl::cameraDisable()
 }
 
 void
-strikepoint::LeptonHardwareImpl::spiRead(void *buf, size_t len)
+strikepoint::LeptonHardwareImpl::reboot_camera()
 {
-    safeRead(_spi_fd, buf, len);
+    _camera_disable();
+    _camera_enable();
+}
+
+void
+strikepoint::LeptonHardwareImpl::spi_read(void *buf, size_t len)
+{
+    size_t totalRead = 0;
+    while (totalRead < len) {
+        ssize_t bytesRead =
+            read(_spi_fd, (uint8_t *) buf + totalRead, len - totalRead);
+        if (bytesRead < 0)
+            BAIL("read failed, error=%s", strerror(errno));
+        if (bytesRead == 0)
+            BAIL("reached end of file for SPI data");
+        totalRead += bytesRead;
+    }
 }

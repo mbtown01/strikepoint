@@ -120,10 +120,6 @@ AudioEngine::_captureLoop(iirfilt_rrrf &hp)
         // RMS of the block (energy per sample). We add a tiny floor to avoid NaNs.
         float rms = std::sqrt((float) (sumsq / (double) buf_hp.size() + 1e-12));
 
-        // peakiness = peak / rms
-        // A transient (strike) tends to have a sharp peak relative to its RMS.
-        // float peakiness = max / (rms + 1e-12f);
-
         // Timing: timestamp this block using the source's monotonic clock.
         uint64_t t = _source.now_ns();
         double since_hit_s = (lastHit == 0) ? 999.0 : (double) (t - lastHit) / 1e9;
@@ -136,8 +132,6 @@ AudioEngine::_captureLoop(iirfilt_rrrf &hp)
             lastHit = t;
             e.t_ns = t;
             e.rms = rms;
-            // e.peakiness = peakiness;
-            // e.score = rms * peakiness; // composite score for ranking
             e.event_seq = ++eventSeq;
 
             std::lock_guard<std::mutex> lk(_mtx);

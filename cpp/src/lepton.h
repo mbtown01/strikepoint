@@ -28,32 +28,19 @@ class LeptonDriver {
     class ILeptonImpl {
       public:
         virtual ~ILeptonImpl() = default;
-
-        virtual void cameraEnable()
-        {
-        }
-
-        virtual void cameraDisable()
-        {
-        }
-
-        virtual void spiRead(void *buf, size_t len) = 0;
-
-      public:
-        static void safeRead(int fd, void *buf, size_t len);
+        virtual void reboot_camera() = 0;
+        virtual void spi_read(void *buf, size_t len) = 0;
     };
 
   public:
     LeptonDriver(strikepoint::Logger &logger, ILeptonImpl &impl);
     ~LeptonDriver();
 
-    void cameraDisable();
-    void cameraEnable();
-    void getDriverInfo(SPLIB_DriverInfo *info);
-    void getFrame(frameInfo &frame_info);
+    void get_driver_info(SPLIB_DriverInfo *info);
+    void get_frame(frameInfo &frame_info);
 
   private:
-    void _driverMain();
+    void _driver_main();
 
   private:
     std::thread _thread;

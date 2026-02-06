@@ -78,7 +78,7 @@ SPLIB_Init(SPLIB_SessionHandle *hndl_ptr,
             new LeptonHardwareImpl(*(session->logger));
         session->driver = new LeptonDriver(
             *session->logger, *session->lepton_hardware_impl);
-        session->driver->getDriverInfo(info);
+        session->driver->get_driver_info(info);
         session->pixel_count =
             (size_t) info->frameWidth * (size_t) info->frameHeight;
         session->source =
@@ -96,7 +96,7 @@ SPLIB_LogHasEntries(SPLIB_SessionHandle hndl, int *hasEntries)
     return _errorHandler(session, __func__, [=]() {
         if (hasEntries == NULL)
             BAIL("hasEntries argument cannot be NULL");
-        *hasEntries = session->logger->getEntriesRemaining() > 0;
+        *hasEntries = session->logger->get_entries_remaining() > 0;
     });
 }
 
@@ -111,14 +111,14 @@ SPLIB_LogGetNextEntry(SPLIB_SessionHandle hndl,
             BAIL("logLevel argument cannot be NULL");
         if (buffer == NULL)
             BAIL("buffer argument cannot be NULL");
-        session->logger->getNextEntry((int *) logLevel, buffer, bufferLen);
+        session->logger->get_next_entry((int *) logLevel, buffer, bufferLen);
     });
 }
 
 int
-SPLIB_GetAudioStrikeEvents(SPLIB_SessionHandle hndl,
-                           uint64_t *event_times,
-                           size_t max_events, size_t *num_events)
+SPLIB_AudioGetEvents(SPLIB_SessionHandle hndl,
+                     uint64_t *event_times,
+                     size_t max_events, size_t *num_events)
 {
     SessionData *session = static_cast<SessionData *>(hndl);
     return _errorHandler(session, __func__, [=]() {
@@ -155,7 +155,7 @@ SPLIB_LeptonGetFrame(SPLIB_SessionHandle hndl,
             BAIL("Frame buffer too small, required=%zu floats, received %zu",
                  session->pixel_count, buffer_size);
         LeptonDriver::frameInfo frameInfo;
-        session->driver->getFrame(frameInfo);
+        session->driver->get_frame(frameInfo);
         *frame_seq = frameInfo.frame_seq;
         *timestamp_ns = frameInfo.t_ns;
         memcpy(buffer, &frameInfo.buffer[0],

@@ -42,9 +42,9 @@ class Logger {
              const SPLIB_LogLevel log_level,
              const char *format, ...);
 
-    int getEntriesRemaining();
+    int get_entries_remaining();
 
-    void getNextEntry(int *log_level, char *buffer, size_t buffer_size);
+    void get_next_entry(int *log_level, char *buffer, size_t buffer_size);
 
   private:
     std::mutex _log_mutex;

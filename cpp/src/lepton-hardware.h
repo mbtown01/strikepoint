@@ -9,9 +9,12 @@ class LeptonHardwareImpl : public LeptonDriver::ILeptonImpl {
     LeptonHardwareImpl(strikepoint::Logger &logger);
     ~LeptonHardwareImpl();
 
-    void cameraEnable() override;
-    void cameraDisable() override;
-    void spiRead(void *buf, size_t len) override;
+    void reboot_camera() override;
+    void spi_read(void *buf, size_t len) override;
+
+  private:
+    void _camera_disable();
+    void _camera_enable();
 
   private:
     LEP_CAMERA_PORT_DESC_T _port_desc;

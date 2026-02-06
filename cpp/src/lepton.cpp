@@ -43,7 +43,7 @@ LeptonDriver::LeptonDriver(Logger &logger, ILeptonImpl &impl) :
     _thread = std::thread([this] {
         _is_running.store(true);
         try {
-            _driverMain();
+            _driver_main();
         } catch (const LeptonDriver::eof_error &e) {
             // gracefully exit on eof
         } catch (const bail_error &e) {
@@ -88,28 +88,10 @@ LeptonDriver::~LeptonDriver()
 }
 
 /*********************************************************************
- * cameraDisable - disable the camera
- *********************************************************************/
-void
-LeptonDriver::cameraDisable()
-{
-    _impl.cameraDisable();
-}
-
-/*********************************************************************
- * cameraEnable - enable the camera
- *********************************************************************/
-void
-LeptonDriver::cameraEnable()
-{
-    _impl.cameraEnable();
-}
-
-/*********************************************************************
  * getDriverInfo - retrieve information about the driver
  *********************************************************************/
 void
-LeptonDriver::getDriverInfo(SPLIB_DriverInfo *info)
+LeptonDriver::get_driver_info(SPLIB_DriverInfo *info)
 {
     if (info == NULL)
         throw std::invalid_argument("info pointer is NULL");
@@ -127,7 +109,7 @@ LeptonDriver::getDriverInfo(SPLIB_DriverInfo *info)
  * will block until a new frame is available from the camera.
  *********************************************************************/
 void
-LeptonDriver::getFrame(LeptonDriver::frameInfo &frame_info)
+LeptonDriver::get_frame(LeptonDriver::frameInfo &frame_info)
 {
     std::unique_lock<std::mutex> lk(_frame_mutex);
     _frame_cond.wait(lk, [this] { return _has_frame.load() ||
@@ -147,28 +129,10 @@ LeptonDriver::getFrame(LeptonDriver::frameInfo &frame_info)
 }
 
 /*********************************************************************
- * _safeRead - read exactly len bytes from fd into buf
- *********************************************************************/
-void
-LeptonDriver::ILeptonImpl::safeRead(int fd, void *buf, size_t len)
-{
-    size_t totalRead = 0;
-    while (totalRead < len) {
-        ssize_t bytesRead =
-            read(fd, (uint8_t *) buf + totalRead, len - totalRead);
-        if (bytesRead < 0)
-            BAIL("read failed, error=%s", strerror(errno));
-        if (bytesRead == 0)
-            BAIL("reached end of file for SPI data");
-        totalRead += bytesRead;
-    }
-}
-
-/*********************************************************************
  * _driverMain - Driver logic main loop
  *********************************************************************/
 void
-LeptonDriver::_driverMain()
+LeptonDriver::_driver_main()
 {
     uint8_t raw_buffer[FRAME_HEIGHT * PACKET_SIZE]{};
     const unsigned int pixel_count = FRAME_HEIGHT * FRAME_WIDTH;
@@ -188,20 +152,20 @@ LeptonDriver::_driverMain()
             // Read until we see the start of a frame, but reboot if we can't
             // sync after a reasonable number of attempts
             unsigned int sync_attempt_count = 0;
-            _impl.spiRead(raw_buffer, PACKET_SIZE);
+            _impl.spi_read(raw_buffer, PACKET_SIZE);
             while ((raw_buffer[0] & 0x0F) != 0 || raw_buffer[1] != 0) {
                 if (sync_attempt_count++ > 300)
                     REBOOT("trouble syncing frame start");
                 LOG_DEBUG(_logger, "re-sync %d/300", sync_attempt_count);
                 usleep(10000);
-                _impl.spiRead(raw_buffer, PACKET_SIZE);
+                _impl.spi_read(raw_buffer, PACKET_SIZE);
             }
 
             // After syncing to the start of a frame, read the remaining packets
             // into the raw buffer all together (will process them next)
             for (int r = 1; r < FRAME_HEIGHT; r++) {
                 uint8_t *raw_row = raw_buffer + r * PACKET_SIZE;
-                _impl.spiRead(raw_row, PACKET_SIZE);
+                _impl.spi_read(raw_row, PACKET_SIZE);
                 if ((raw_row[0] & 0x0F) != 0 || raw_row[1] != r)
                     RETRY("bad frame received at (%d/%d)", r, FRAME_HEIGHT);
             }
@@ -246,8 +210,7 @@ LeptonDriver::_driverMain()
             retry_count++;
         } catch (const reboot_error &e) {
             LOG_ERROR(_logger, "REBOOTING due to %s", e.what());
-            cameraDisable();
-            cameraEnable();
+            _impl.reboot_camera();
             memset(prev_buffer, 0, sizeof(prev_buffer));
             retry_count = 0;
         }

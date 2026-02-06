@@ -64,7 +64,7 @@ strikepoint::Logger::log(const char *file_name,
 }
 
 int
-strikepoint::Logger::getEntriesRemaining()
+strikepoint::Logger::get_entries_remaining()
 {
     std::lock_guard<std::mutex> lk(_log_mutex);
     int msgCount = _log_buffer.size();
@@ -72,7 +72,7 @@ strikepoint::Logger::getEntriesRemaining()
 }
 
 void
-strikepoint::Logger::getNextEntry(
+strikepoint::Logger::get_next_entry(
     int *log_level, char *buffer, size_t buffer_size)
 {
     if (log_level == NULL)

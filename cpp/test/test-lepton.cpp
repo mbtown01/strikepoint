@@ -21,14 +21,14 @@ class LeptonTestImpl : public LeptonDriver::ILeptonImpl {
     LeptonTestImpl();
     ~LeptonTestImpl() override;
 
-    void cameraEnable() override;
+    void reboot_camera() override;
+    void spi_read(void *buf, size_t len) override;
 
     void appendGoodFrame(uint16_t pixelValue);
     void appendBadFrameAllRows(uint16_t pixelValue);
     void appendBadFrameOneRow(uint16_t pixelValue);
-    void spiRead(void *buf, size_t len) override;
     void finalize();
-    unsigned int cameraEnabledCount() const { return _camera_enabled_count; }
+    unsigned int rebootCount() const { return _reboot_count; }
 
   private:
     void _buildFrame(uint16_t value, std::vector<uint8_t> &frameBuffer);
@@ -38,14 +38,14 @@ class LeptonTestImpl : public LeptonDriver::ILeptonImpl {
     std::condition_variable _cv;
     std::mutex _mutex;
     off64_t _offset;
-    unsigned int _camera_enabled_count;
+    unsigned int _reboot_count;
 };
 
 LeptonTestImpl::LeptonTestImpl() :
     _offset(0),
     _trigger_eof(false),
     _at_eof(false),
-    _camera_enabled_count(0)
+    _reboot_count(0)
 {
 }
 
@@ -55,9 +55,26 @@ LeptonTestImpl::~LeptonTestImpl()
 }
 
 void
-LeptonTestImpl::cameraEnable()
+LeptonTestImpl::reboot_camera()
 {
-    ++_camera_enabled_count;
+    ++_reboot_count;
+}
+
+void
+LeptonTestImpl::spi_read(void *buf, size_t len)
+{
+    std::unique_lock<std::mutex> lk(_mutex);
+    _cv.wait(lk, [this, len] { return (_offset + len) <= _data.size() ||
+                                      _trigger_eof.load(); });
+    if (_trigger_eof.load() && _offset == _data.size()) {
+        _at_eof.store(true);
+        BAIL_WITH_ERROR(LeptonDriver::eof_error, "EOF has been reached");
+    }
+    if ((_offset + len) > _data.size())
+        BAIL("Uh oh, somehow there's not enough data left to return");
+
+    memcpy(buf, &(_data[_offset]), len);
+    _offset += len;
 }
 
 void
@@ -102,23 +119,6 @@ LeptonTestImpl::appendBadFrameOneRow(uint16_t pixelValue)
 }
 
 void
-LeptonTestImpl::spiRead(void *buf, size_t len)
-{
-    std::unique_lock<std::mutex> lk(_mutex);
-    _cv.wait(lk, [this, len] { return (_offset + len) <= _data.size() ||
-                                      _trigger_eof.load(); });
-    if (_trigger_eof.load() && _offset == _data.size()) {
-        _at_eof.store(true);
-        BAIL_WITH_ERROR(LeptonDriver::eof_error, "EOF has been reached");
-    }
-    if ((_offset + len) > _data.size())
-        BAIL("Uh oh, somehow there's not enough data left to return");
-
-    memcpy(buf, &(_data[_offset]), len);
-    _offset += len;
-}
-
-void
 LeptonTestImpl::finalize()
 {
     _trigger_eof.store(true);
@@ -153,7 +153,7 @@ TEST(Lepton, GetFrameInfo)
     strikepoint::LeptonDriver leptonDriver(logger, leptonTest);
 
     SPLIB_DriverInfo driverInfo;
-    leptonDriver.getDriverInfo(&driverInfo);
+    leptonDriver.get_driver_info(&driverInfo);
     leptonTest.finalize();
     EXPECT_EQ(driverInfo.frameWidth, FRAME_WIDTH);
     EXPECT_EQ(driverInfo.frameHeight, FRAME_HEIGHT);
@@ -173,7 +173,7 @@ TEST(Lepton, GetFrameNormal)
     leptonTest.appendGoodFrame(0);
     leptonTest.appendGoodFrame(0);
     for (int i = 0; i < 50; i++) {
-        leptonDriver.getFrame(frame_info);
+        leptonDriver.get_frame(frame_info);
         EXPECT_EQ(3 * i, frame_info.frame_seq);
         leptonTest.appendGoodFrame(i + 1);
         leptonTest.appendGoodFrame(i + 1);
@@ -195,7 +195,7 @@ TEST(Lepton, GetFrameEveryFrameChanges)
 
     leptonTest.appendGoodFrame(0);
     for (int i = 0; i < 50; i++) {
-        leptonDriver.getFrame(frame_info);
+        leptonDriver.get_frame(frame_info);
         EXPECT_EQ(i, frame_info.frame_seq);
         leptonTest.appendGoodFrame(i + 1);
     }
@@ -214,9 +214,9 @@ TEST(Lepton, CheckStaleFrames)
 
     for (int i = 0; i < 50; i++)
         leptonTest.appendGoodFrame(50);
-    leptonDriver.getFrame(frame_info);
+    leptonDriver.get_frame(frame_info);
     leptonTest.finalize();
-    EXPECT_EQ(1, leptonTest.cameraEnabledCount());
+    EXPECT_EQ(1, leptonTest.rebootCount());
 }
 
 /*********************************************************************
@@ -233,7 +233,7 @@ TEST(Lepton, BadFrameAllRows)
     for (int i = 0; i < 50; i++) {
         usleep(1000);
         leptonTest.appendGoodFrame(i + 1);
-        leptonDriver.getFrame(frame_info);
+        leptonDriver.get_frame(frame_info);
         EXPECT_EQ(i, frame_info.frame_seq);
     }
     leptonTest.finalize();
@@ -253,7 +253,7 @@ TEST(Lepton, BadFrameOneRow)
     for (int i = 0; i < 50; i++) {
         usleep(1000);
         leptonTest.appendGoodFrame(i + 1);
-        leptonDriver.getFrame(frame_info);
+        leptonDriver.get_frame(frame_info);
         EXPECT_EQ(i, frame_info.frame_seq);
     }
     leptonTest.finalize();
