@@ -94,8 +94,7 @@ class DeviceBasedFrameInfoProvider(FrameInfoProvider):
                            interpolation=cv2.INTER_NEAREST)
         frameInfo.rgbFrames['visual'] = frame
 
-        audioStrikeEvents = self.splibDriver.getAudioStrikeEvents()
-        frameInfo.metadata['audioStrikeDetected'] = len(audioStrikeEvents) > 0
+        frameInfo.metadata.update(frameWithMetadata)
 
         return frameInfo
 
@@ -118,7 +117,7 @@ if __name__ == "__main__":
     if args.input_recording:
         logger.info(f"Using recording file: {args.input_recording}")
         frameInfoProvider = FileBasedFrameInfoProvider(
-            args.input_recording, timestampScale=1.0)
+            args.input_recording, timestampScale=2.0)
     else:
         from picamera2 import Picamera2
         frameInfoProvider = DeviceBasedFrameInfoProvider()

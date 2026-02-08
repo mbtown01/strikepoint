@@ -87,10 +87,19 @@ class SplibDriver:
         self._makeApiCall("SPLIB_LeptonGetFrame", buf_ptr,
                           ctypes.c_size_t(buf.nbytes), ctypes.byref(eventId),
                           ctypes.byref(timestamp_ns))
+        
+        bufferLen = 32
+        numEvents = ctypes.c_size_t(0)
+        eventsBuffer = (ctypes.c_uint64 * bufferLen)()
+        self._makeApiCall(
+            "SPLIB_AudioGetEvents", eventsBuffer,
+            ctypes.c_size_t(bufferLen), ctypes.byref(numEvents))
+
         return {
             "frame": buf.reshape((self.frameHeight, self.frameWidth)),
             "eventId": eventId.value,
-            "timestamp_ns": timestamp_ns.value
+            "timestamp_ns": timestamp_ns.value,
+            "audioStrikeDetected": numEvents.value > 0
         }
 
     def shutdown(self):
@@ -116,17 +125,6 @@ class SplibDriver:
             "SPLIB_LogGetNextEntry", ctypes.byref(level), buffer,
             ctypes.c_size_t(bufferLen))
         return (self._logLevelMap[level.value], buffer.value.decode('utf8'))
-
-    def getAudioStrikeEvents(self):
-        """Retrieve audio strike event timestamps (in ns).
-        """
-        bufferLen = 32
-        numEvents = ctypes.c_size_t(0)
-        eventsBuffer = (ctypes.c_uint64 * bufferLen)()
-        self._makeApiCall(
-            "SPLIB_AudioGetEvents", eventsBuffer,
-            ctypes.c_size_t(bufferLen), ctypes.byref(numEvents))
-        return [eventsBuffer[i] for i in range(numEvents.value)]
 
     @staticmethod
     def find_library_path(name_hint="libstrikepoint.so"):

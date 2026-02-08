@@ -5,7 +5,7 @@ from dash.dependencies import Input, Output, State
 from enum import IntEnum
 
 from strikepoint.database import Database
-from strikepoint.imaging import CalibrationEngine1Ball
+from strikepoint.engine.calibrate import CalibrationEngine1Ball
 from strikepoint.dash.events import DashEventQueueManager
 from strikepoint.dash.content import ContentManager
 from strikepoint.frames import FrameInfo
@@ -18,7 +18,6 @@ class CalibrationDashUi:
                  db: Database,
                  contentManager: ContentManager,
                  eventQueueManager: DashEventQueueManager):
-        self.app = app
         self.db = db
         self.calibrationEngine = CalibrationEngine1Ball()
         self.contentManager = contentManager
@@ -61,20 +60,20 @@ class CalibrationDashUi:
             'fontSize': 'clamp(2rem, 80vmin, 6rem)',
         }
 
-        @self.app.callback(Input("cal-cancel-btn", "n_clicks"),
-                           prevent_initial_call=True)
+        @app.callback(Input("cal-cancel-btn", "n_clicks"),
+                      prevent_initial_call=True)
         def on_cancel_calibration(_):
             self.eventQueueManager.fireEvent('cal-toggle-dialog')
 
-        @self.app.callback(Input("cal-accept-btn", "n_clicks"),
-                           prevent_initial_call=True)
+        @app.callback(Input("cal-accept-btn", "n_clicks"),
+                      prevent_initial_call=True)
         def on_accept_calibration(_):
             self.eventQueueManager.fireEvent(
-                'update-calibration', self.lastTransformMatrix)
+                'app-update-calibration', self.lastTransformMatrix)
             self.eventQueueManager.fireEvent('cal-toggle-dialog')
 
-        @self.app.callback(Input("cal-modal", "is_open"),
-                           prevent_initial_call=True)
+        @app.callback(Input("cal-modal", "is_open"),
+                      prevent_initial_call=True)
         def on_calibration_modal_open(is_open):
             if is_open:
                 self.calibrationEngine.start()
@@ -159,7 +158,7 @@ class CalibrationDashUi:
             return (row1col1, row1col2, row1col3, row1col4,
                     row2col1, row2col2, row2col3, row2col4, acceptDisabled)
         result = eventData[-1] or dict()
-        
+
         phaseCompleted = result.get(
             'phaseCompleted', CalibrationEngine1Ball.CalibrationPhase.INACTIVE)
         if phaseCompleted > CalibrationEngine1Ball.CalibrationPhase.INACTIVE:
@@ -167,7 +166,7 @@ class CalibrationDashUi:
                 'cal-vis-demo', result['visDemo'])
             calibratedThermDemo = self.contentManager.registerImage(
                 'cal-therm-demo', result['thermDemo'])
-            
+
         videoSrcVisual = \
             self.contentManager.getVideoFrameEndpoint('cal-vis-frame')
         videoSrcThermal = \

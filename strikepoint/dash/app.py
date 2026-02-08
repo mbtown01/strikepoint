@@ -1,23 +1,17 @@
-from time import monotonic
 import dash_bootstrap_components as dbc
-import pandas as pd
-import plotly.express as px
 
 from dash import Dash, html, dcc, no_update
 from dash.dependencies import Input, Output, State
 from threading import Lock, Thread, Condition
 from queue import Queue
 from logging import getLogger
-import cProfile
-import atexit
-import signal
 
 from strikepoint.database import Database
-from strikepoint.frames import FrameInfoWriter, FrameInfo
-from strikepoint.imaging import StrikeDetectionEngine
+from strikepoint.frames import FrameInfoWriter
 from strikepoint.dash.events import DashEventQueueManager
 from strikepoint.dash.content import ContentManager
 from strikepoint.dash.calibrate import CalibrationDashUi
+from strikepoint.dash.strike import StrikeDetectionDashUI
 
 logger = getLogger("strikepoint")
 
@@ -41,14 +35,16 @@ class StrikePointDashApp:
     def __init__(self,
                  frameInfoProvider: FrameInfoProvider,
                  msgQueue: Queue):
-        self.app = Dash(__name__, title='StrikePoint', serve_locally=True)
+        self.app = Dash(__name__,
+                        title='StrikePoint',
+                        serve_locally=True,
+                        suppress_callback_exceptions=True)
         self.frameInfoProvider = frameInfoProvider
         self.contentManager = ContentManager(self.app)
         self.eventQueueManager = DashEventQueueManager(self.app)
-        self.strikeDetectionEngine = StrikeDetectionEngine()
         self.database = Database()
-        self.cameraThread = Thread(target=self._cameraThreadMain, daemon=True)
-        self.driverThread = Thread(target=self._driverThreadMain, daemon=True)
+        self.driverThread = Thread(
+            name='ImageCaptureDriver', target=self._driverThreadMain, daemon=True)
         self.frameWriter = None
         self.frameWriterLock = Lock()
         self.thermalVisualTransform = self.database.loadLatestTransform()
@@ -58,20 +54,23 @@ class StrikePointDashApp:
             app=self.app,
             db=self.database,
             contentManager=self.contentManager,
-            eventQueueManager=self.eventQueueManager,
-        )
+            eventQueueManager=self.eventQueueManager)
+        self.strikeDetectionUi = StrikeDetectionDashUI(
+            app=self.app,
+            contentManager=self.contentManager,
+            eventQueueManager=self.eventQueueManager)
 
         self.eventQueueManager.registerEvent(
-            'add-history-card', self._addHistoryCardHandler,
+            'app-add-history-card', self._addHistoryCardHandler,
             [("history-div", "children")])
         self.eventQueueManager.registerEvent(
-            'update-calibration', self._updateCalibrationHandler, [])
+            'app-update-calibration', self._updateCalibrationHandler, [])
         self.eventQueueManager.registerEvent(
-            'update-calibration-status', self._updateCalibrationStatusHandler,
+            'app-update-calibration-status', self._updateCalibrationStatusHandler,
             [("calibrate-btn", "children"),
              ("calibrate-btn", "color")], needsEventData=False)
         self.eventQueueManager.registerEvent(
-            'update-log-entries', self._updateLogEntriesHandler,
+            'app-update-log-entries', self._updateLogEntriesHandler,
             [("log-content-div", "children")])
 
         self.driverThread.start()
@@ -82,13 +81,19 @@ class StrikePointDashApp:
         )
         def detect_reload(data):
             if data is None:
-                self.eventQueueManager.fireEvent('update-calibration-status')
+                self.eventQueueManager.fireEvent(
+                    'app-update-calibration-status')
 
         @self.app.callback(Input("calibrate-btn", "n_clicks"),
                            prevent_initial_call=True)
         def on_recalibrate(_):
-            self.eventQueueManager.fireEvent('update-calibration-status')
+            self.eventQueueManager.fireEvent('app-update-calibration-status')
             self.calibrationUi.launchCalibrationDialog()
+
+        @self.app.callback(Input("start-detection-btn", "n_clicks"),
+                           prevent_initial_call=True)
+        def on_recalibrate(_):
+            self.strikeDetectionUi.launchDialog()
 
         @self.app.callback(Output("start-rec-btn", "children"),
                            Input("start-rec-btn", "n_clicks"),
@@ -113,7 +118,7 @@ class StrikePointDashApp:
         )
         def render_page(pathname):
             if pathname == "/":
-                return self.loggingDiv
+                return self.strikeDiv
             elif pathname == "/logs":
                 return self.loggingDiv
             elif pathname == "/history":
@@ -166,6 +171,16 @@ class StrikePointDashApp:
                                 id="calibrate-btn",
                             ),
                         ),
+                        dbc.Col(
+                            dbc.Button(
+                                "Start", color="success", size="sm",
+                                style={"width": "120px",
+                                       "marginTop": "8px",
+                                       "marginBottom": "8px",
+                                       "marginRight": "8px"},
+                                id="start-detection-btn",
+                            ),
+                        ),
                     ],
                         align="center",
                     ),
@@ -177,7 +192,11 @@ class StrikePointDashApp:
             )
         )
 
-        # layout children left-to-right using flex; left column = 20%, right = 80%
+        self.strikeDiv = html.Div([
+
+        ], id="strike-div",
+            style={"padding": "8px"})
+
         self.loggingDiv = html.Div([
             html.Div([
                 html.H4("Live Feed", style={
@@ -229,6 +248,7 @@ class StrikePointDashApp:
             dcc.Store(id="strikepoint-session-store", storage_type="session"),
             dcc.Location(id='strikepoint-url', refresh=False),
             self.calibrationUi.modal,
+            self.strikeDetectionUi.modal,
             self.navbar,
             html.Div(
                 id="page-content",
@@ -267,23 +287,14 @@ class StrikePointDashApp:
     def _updateCalibrationHandler(self, eventData: list):
         self.thermalVisualTransform = eventData[-1]
         self.database.saveTransform(self.thermalVisualTransform)
-        self.strikeDetectionEngine.reset()
         card = dbc.Card([
             dbc.Alert("Calibration Complete", color='success'),
         ], style={"marginBottom": "4px"})
-        self.eventQueueManager.fireEvent('add-history-card', card)
-        self.eventQueueManager.fireEvent('update-calibration-status')
-
-    def _cameraThreadMain(self):
-        pass
-
+        self.eventQueueManager.fireEvent('app-add-history-card', card)
+        self.eventQueueManager.fireEvent('app-update-calibration-status')
 
     def _driverThreadMain(self):
         frameSeq = 0
-
-        # prof = cProfile.Profile()
-        # prof.enable()
-        # profPath = "strikepoint-driver.prof"
 
         while True:
             try:
@@ -299,40 +310,23 @@ class StrikePointDashApp:
                         self.frameWriter.writeFrameInfo(frameInfo)
                 while self.msgQueue.qsize() > 0:
                     rtn = self.msgQueue.get_nowait()
-                    self.eventQueueManager.fireEvent('update-log-entries', rtn)
-
-                # if frameSeq % (9*60) == 0:
-                #     prof.dump_stats(profPath)
-                #     logger.info(
-                #         f"Driver thread {frameSeq} profile written to {profPath}")
+                    self.eventQueueManager.fireEvent(
+                        'app-update-log-entries', rtn)
 
                 self.calibrationUi.process(frameSeq, frameInfo)
 
-                # TODO: This is a race condition if recalibrate is pressed while here
                 if self.thermalVisualTransform is not None:
-                    result = self.strikeDetectionEngine.detectStrike(
+                    self.strikeDetectionUi.process(
                         frameInfo, self.thermalVisualTransform)
-                    if result is not None:
-                        contentPath = self.contentManager.registerImage(
-                            'strike', result['image'])
-                        color = 'success'
-                        color = 'danger' if result['leftScore'] < 0.4 else 'warning'
-                        headerText = f"Left Score: {result['leftScore']*100:.1f}%, " \
-                            f"Right Score: {result['rightScore']*100:.1f}%"
-                        card = dbc.Card([
-                            dbc.Alert(headerText, color=color),
-                            dbc.CardBody(html.Img(src=contentPath)),
-                        ], style={"marginBottom": "4px"})
-                        logger.debug(
-                            f"Strike detected! Left: {result['leftScore']}, "
-                            f"Right: {result['rightScore']}")
-                        self.eventQueueManager.fireEvent(
-                            'add-history-card', card)
 
             except Exception as ex:
                 logger.error(
                     f"StrikePointDashApp thread exception: {ex}")
 
-    def run(self, host="0.0.0.0", port=8050, debug=False, threaded=True):
+    def run(self):
         # threaded=True helps keep the MJPEG stream and Dash callbacks responsive
-        self.app.run(host=host, port=port, debug=debug, threaded=threaded)
+        self.app.run(host="0.0.0.0",
+                     port=8050,
+                     debug=True,
+                     #  threaded=True
+                     )
