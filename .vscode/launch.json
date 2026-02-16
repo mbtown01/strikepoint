@@ -34,7 +34,8 @@
             "console": "internalConsole",
             "args": [
                 "--input-recording",
-                "dev/data/demo-with-audio.bin"
+                // "dev/data/demo-with-audio-2.bin"
+                "dev/data/demo-1ball-calibrate3.bin"
             ],
             "cwd": "${workspaceFolder}"
         },

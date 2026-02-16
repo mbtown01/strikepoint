@@ -1,4 +1,5 @@
 import dash_bootstrap_components as dbc
+import threading
 
 from dash import Dash, html, dcc, no_update
 from dash.dependencies import Input, Output, State
@@ -7,19 +8,15 @@ from queue import Queue
 from logging import getLogger
 
 from strikepoint.database import Database
-from strikepoint.frames import FrameInfoWriter
+from strikepoint.frames import FrameInfoWriter, FrameInfoProvider
+from strikepoint.dash.calibrate import CalibrationUpdatedEvent
 from strikepoint.dash.events import DashEventQueueManager
 from strikepoint.dash.content import ContentManager
 from strikepoint.dash.calibrate import CalibrationDashUi
 from strikepoint.dash.strike import StrikeDetectionDashUI
+from strikepoint.events import EventBus, FrameEvent, LogBatchEvent
 
 logger = getLogger("strikepoint")
-
-
-class FrameInfoProvider:
-
-    def getFrameInfo(self):
-        raise NotImplementedError()
 
 
 class StrikePointDashApp:
@@ -43,6 +40,7 @@ class StrikePointDashApp:
         self.contentManager = ContentManager(self.app)
         self.eventQueueManager = DashEventQueueManager(self.app)
         self.database = Database()
+        self.eventBus = EventBus()
         self.driverThread = Thread(
             name='ImageCaptureDriver', target=self._driverThreadMain, daemon=True)
         self.frameWriter = None
@@ -50,30 +48,39 @@ class StrikePointDashApp:
         self.thermalVisualTransform = self.database.loadLatestTransform()
         self.logMessages = []
         self.msgQueue = msgQueue
+
         self.calibrationUi = CalibrationDashUi(
             app=self.app,
-            db=self.database,
             contentManager=self.contentManager,
-            eventQueueManager=self.eventQueueManager)
+            eventQueueManager=self.eventQueueManager,
+            eventBus=self.eventBus)
         self.strikeDetectionUi = StrikeDetectionDashUI(
             app=self.app,
             contentManager=self.contentManager,
-            eventQueueManager=self.eventQueueManager)
+            eventQueueManager=self.eventQueueManager,
+            eventBus=self.eventBus)
 
         self.eventQueueManager.registerEvent(
-            'app-add-history-card', self._addHistoryCardHandler,
+            'app-add-history-card', self._dashAddHistoryCardHandler,
             [("history-div", "children")])
         self.eventQueueManager.registerEvent(
-            'app-update-calibration', self._updateCalibrationHandler, [])
+            'app-update-calibration', self._dashUpdateCalibrationHandler, [])
         self.eventQueueManager.registerEvent(
-            'app-update-calibration-status', self._updateCalibrationStatusHandler,
+            'app-update-calibration-status', self._dashUpdateCalibrationStatusHandler,
             [("calibrate-btn", "children"),
              ("calibrate-btn", "color")], needsEventData=False)
         self.eventQueueManager.registerEvent(
-            'app-update-log-entries', self._updateLogEntriesHandler,
+            'app-update-log-entries', self._dashUpdateLogEntriesHandler,
             [("log-content-div", "children")])
 
+        self.eventBus.subscribe(LogBatchEvent, self._onLogBatch)
+        self.eventBus.subscribe(CalibrationUpdatedEvent,
+                                self._onCalibrationUpdated)
         self.driverThread.start()
+
+        if self.thermalVisualTransform is not None:
+            self.eventBus.publish(CalibrationUpdatedEvent(
+                thermalVisualTransform=self.thermalVisualTransform))
 
         @self.app.callback(
             Input("strikepoint-session-store", "data"),
@@ -88,7 +95,7 @@ class StrikePointDashApp:
                            prevent_initial_call=True)
         def on_recalibrate(_):
             self.eventQueueManager.fireEvent('app-update-calibration-status')
-            self.calibrationUi.launchCalibrationDialog()
+            self.calibrationUi.launchDialog()
 
         @self.app.callback(Input("start-detection-btn", "n_clicks"),
                            prevent_initial_call=True)
@@ -260,23 +267,23 @@ class StrikePointDashApp:
 
         self.app.validation_layout = self.app.layout
 
-    def _updateLogEntriesHandler(self, log_content_div_children, eventData: list):
+    def _dashUpdateLogEntriesHandler(self, log_content_div_children, eventData: list):
         for (r, msg) in eventData:
             color = self.LEVEL_NAME_COLOR_MAP.get(r.levelname, "white")
             self.logMessages.append(html.Div(msg, style={
                 "color": color, "margin": "0", "padding": "0"}))
         return self.logMessages
 
-    def _addHistoryCardHandler(self, history_div_children, eventData: list):
+    def _dashAddHistoryCardHandler(self, history_div_children, eventData: list):
         for card in eventData:
             history_div_children = history_div_children or []
             history_div_children = [card] + history_div_children
 
         return history_div_children
 
-    def _updateCalibrationStatusHandler(self,
-                                        calibration_status_children,
-                                        calibration_status_color):
+    def _dashUpdateCalibrationStatusHandler(self,
+                                            calibration_status_children,
+                                            calibration_status_color):
         calibration_status_children = "Not Calibrated"
         calibration_status_color = "warning"
         if self.thermalVisualTransform is not None:
@@ -284,7 +291,7 @@ class StrikePointDashApp:
             calibration_status_color = "success"
         return calibration_status_children, calibration_status_color
 
-    def _updateCalibrationHandler(self, eventData: list):
+    def _dashUpdateCalibrationHandler(self, eventData: list):
         self.thermalVisualTransform = eventData[-1]
         self.database.saveTransform(self.thermalVisualTransform)
         card = dbc.Card([
@@ -293,7 +300,15 @@ class StrikePointDashApp:
         self.eventQueueManager.fireEvent('app-add-history-card', card)
         self.eventQueueManager.fireEvent('app-update-calibration-status')
 
+    def _onLogBatch(self, ev: LogBatchEvent) -> None:
+        self.eventQueueManager.fireEvent('app-update-log-entries', ev.lines)
+
+    def _onCalibrationUpdated(self, event: CalibrationUpdatedEvent) -> None:
+        self.eventQueueManager.fireEvent(
+            'app-update-calibration', event.thermalVisualTransform)
+
     def _driverThreadMain(self):
+        threading.current_thread().name = f"StrikePoint capture driver"
         frameSeq = 0
 
         while True:
@@ -305,28 +320,24 @@ class StrikePointDashApp:
                 self.contentManager.registerVideoFrame(
                     'thermal', frameInfo.rgbFrames['thermal'])
 
+                self.eventBus.publish(FrameEvent(
+                    frameSeq=frameSeq, frameInfo=frameInfo))
                 with self.frameWriterLock:
                     if self.frameWriter is not None:
                         self.frameWriter.writeFrameInfo(frameInfo)
                 while self.msgQueue.qsize() > 0:
                     rtn = self.msgQueue.get_nowait()
-                    self.eventQueueManager.fireEvent(
-                        'app-update-log-entries', rtn)
+                    self.eventBus.publish(LogBatchEvent(lines=rtn))
 
-                self.calibrationUi.process(frameSeq, frameInfo)
-
-                if self.thermalVisualTransform is not None:
-                    self.strikeDetectionUi.process(
-                        frameInfo, self.thermalVisualTransform)
+                self.eventBus.pump()
 
             except Exception as ex:
                 logger.error(
                     f"StrikePointDashApp thread exception: {ex}")
 
     def run(self):
-        # threaded=True helps keep the MJPEG stream and Dash callbacks responsive
         self.app.run(host="0.0.0.0",
                      port=8050,
-                     debug=True,
+                     #  debug=True,
                      #  threaded=True
                      )

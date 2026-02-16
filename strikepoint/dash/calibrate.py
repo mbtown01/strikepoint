@@ -1,63 +1,80 @@
 import dash_bootstrap_components as dbc
 
+from typing import Any
+from dataclasses import dataclass
 from dash import Dash, html, dcc, no_update
 from dash.dependencies import Input, Output, State
 from enum import IntEnum
+from logging import getLogger
 
 from strikepoint.database import Database
-from strikepoint.engine.calibrate import CalibrationEngine1Ball
+from strikepoint.engine.calibrate import CalibrationEngine, \
+    CalibrationProgressEvent
 from strikepoint.dash.events import DashEventQueueManager
 from strikepoint.dash.content import ContentManager
-from strikepoint.frames import FrameInfo
+from strikepoint.events import EventBus, FrameEvent
+
+logger = getLogger("strikepoint")
+
+
+@dataclass(frozen=True)
+class CalibrationUpdatedEvent:
+    thermalVisualTransform: Any
 
 
 class CalibrationDashUi:
 
     def __init__(self,
                  app: Dash,
-                 db: Database,
                  contentManager: ContentManager,
-                 eventQueueManager: DashEventQueueManager):
-        self.db = db
-        self.calibrationEngine = CalibrationEngine1Ball()
+                 eventQueueManager: DashEventQueueManager,
+                 eventBus: EventBus | None = None):
+        self.calibrationEngine = None
         self.contentManager = contentManager
         self.eventQueueManager = eventQueueManager
+        self.eventBus = eventBus
         self.lastTransformMatrix = None
 
+        self.eventBus.subscribe(FrameEvent, self._onFrameEvent)
+        self.eventBus.subscribe(CalibrationProgressEvent,
+                                self._onCalibrationProgressEvent)
+
         self.eventQueueManager.registerEvent(
-            'cal-toggle-dialog', self._toggleDialogHandler,
+            'cal-toggle-dialog', self._dashToggleDialogHandler,
             [("cal-modal", "is_open")], needsEventData=False)
         self.eventQueueManager.registerEvent(
-            'cal-update-dialog', self._updateDialogHandler,
-            [("cal-div-1-1", "children"), ("cal-div-1-2", "children"),
-             ("cal-div-1-3", "children"), ("cal-div-1-4", "children"),
-             ("cal-div-2-1", "children"), ("cal-div-2-2", "children"),
-             ("cal-div-2-3", "children"), ("cal-div-2-4", "children"),
-             ("cal-accept-btn", "disabled")],
+            'cal-update-dialog', self._dashUpdateDialogHandler,
+            [("cal-accept-btn", "disabled")],
             needsEventData=True)
+        self.eventQueueManager.registerEvent(
+            'cal-update-instruction-text', self._dashUpdateInstructionTextHandler,
+            [("cal-instruction-text", "children")], needsEventData=True)
 
-        calibrationText = """
+        self.initialCalibrationText = """
         To calibrate the thermal and visual cameras, we need to identify three
         unique points that are visible in both frames. Please place a warm ball
         in the hitting area.
         """
+        self.afterPoint1Text = """
+        Great, now we have the first reference point!  Now move the ball to 
+        another location where the center is NOT inside the blue circle.
+        """
+        self.afterPoint2Text = """
+        Great, now we have the second reference point!  Find one more spot 
+        outside any blue circles.
+        """
+        self.afterPoint3Text = """
+        Calibration complete!  You should now see the ghost images of the 
+        ball alongside the thermal images which are warped to match the
+        visual images.  If the circles aren't round or the warped ball images
+        aren't close enough to the centers, cancel and re-try.
+        """
 
-        self.modalGridImageStyle = {
-            "height": "100%",
+        self.imageStyle = {
             "width": "100%",
+            "height": "auto",
+            "display": "block",
             "objectFit": "contain",
-            "objectPosition": "center",
-        }
-
-        modalGridDivStyle = {
-            'width': '100%',
-            'height': '100%',
-            'color': 'white',
-            'display': 'grid',
-            'placeItems': 'center',
-            'fontFamily': 'system-ui, sans-serif',
-            'fontWeight': '700',
-            'fontSize': 'clamp(2rem, 80vmin, 6rem)',
         }
 
         @app.callback(Input("cal-cancel-btn", "n_clicks"),
@@ -68,8 +85,8 @@ class CalibrationDashUi:
         @app.callback(Input("cal-accept-btn", "n_clicks"),
                       prevent_initial_call=True)
         def on_accept_calibration(_):
-            self.eventQueueManager.fireEvent(
-                'app-update-calibration', self.lastTransformMatrix)
+            self.eventBus.publish(CalibrationUpdatedEvent(
+                thermalVisualTransform=self.lastTransformMatrix))
             self.eventQueueManager.fireEvent('cal-toggle-dialog')
 
         @app.callback(Input("cal-modal", "is_open"),
@@ -80,28 +97,37 @@ class CalibrationDashUi:
                 self.lastTransformMatrix = None
                 self.eventQueueManager.fireEvent('cal-update-dialog')
 
+        visualSrc = self.contentManager.getVideoFrameEndpoint('cal-vis-frame')
+        thermalSrc = self.contentManager.getVideoFrameEndpoint(
+            'cal-therm-frame')
+
         self.modal = dbc.Modal([
-            dbc.ModalHeader(dbc.ModalTitle("Calibration Mode")),
+            dbc.ModalHeader(dbc.ModalTitle(
+                "Calibration Mode"), close_button=False),
             dbc.ModalBody(
                 dbc.Container([
                     dbc.Row(
                         dbc.Col(
-                            html.P(calibrationText, style={"margin": "0"})
+                            html.P(self.initialCalibrationText,
+                                   id='cal-instruction-text',
+                                   style={"margin": "0"})
                         ),
                         className="mb-3"
                     ),
-                    dbc.Row(
-                        list(dbc.Col(html.Div(f"{a}", id=f"cal-div-1-{a}",
-                                              style=modalGridDivStyle))
-                             for a in range(1, 5)),
-                        className="mb-2",
-                    ),
-                    dbc.Row(
-                        list(dbc.Col(html.Div(f"{a}", id=f"cal-div-2-{a}",
-                                              style=modalGridDivStyle))
-                             for a in range(1, 5)),
-                        className="mb-2",
-                    ),
+                    dbc.Row([
+                        dbc.Col(
+                            html.Img(id="cal-image-visual",
+                                     src=visualSrc,
+                                     style=self.imageStyle),
+                            width=6,
+                        ),
+                        dbc.Col(
+                            html.Img(id="cal-image-thermal",
+                                     src=thermalSrc,
+                                     style=self.imageStyle),
+                            width=6,
+                        ),
+                    ], className="mb-2"),
                 ],
                     fluid=True
                 )
@@ -127,94 +153,68 @@ class CalibrationDashUi:
             is_open=False,
         )
 
-    def launchCalibrationDialog(self):
+    def launchDialog(self):
         self.eventQueueManager.fireEvent('cal-toggle-dialog')
 
-    def process(self, frameSeq: int, frameInfo: FrameInfo):
-        result = self.calibrationEngine.process(frameSeq, frameInfo)
-        visFrame = result.get('visFrame')
-        if visFrame is not None:
-            self.contentManager.registerVideoFrame(
-                'cal-vis-frame', visFrame)
-        thermFrame = result.get('thermFrame')
-        if thermFrame is not None:
-            self.contentManager.registerVideoFrame(
-                'cal-therm-frame', thermFrame)
+    def _onFrameEvent(self, event: FrameEvent) -> None:
+        if self.calibrationEngine:
+            self.calibrationEngine.process(
+                self.eventBus, event.frameSeq, event.frameInfo)
 
-        if 'phaseCompleted' in result:
-            self.eventQueueManager.fireEvent('cal-update-dialog', result)
-            self.lastTransformMatrix = result.get('transformMatrix')
+    def _onCalibrationProgressEvent(self, event: CalibrationProgressEvent) -> None:
+        self.contentManager.registerVideoFrame(
+            'cal-vis-frame', event.visFrame)
+        self.contentManager.registerVideoFrame(
+            'cal-therm-frame', event.thermFrame)
 
-    def _toggleDialogHandler(self, isOpen: bool):
+        if event.phaseCompleted == CalibrationEngine.CalibrationPhase.POINT_1:
+            self.eventQueueManager.fireEvent(
+                'cal-update-instruction-text', self.afterPoint1Text)
+        if event.phaseCompleted == CalibrationEngine.CalibrationPhase.POINT_2:
+            self.eventQueueManager.fireEvent(
+                'cal-update-instruction-text', self.afterPoint2Text)
+        if event.phaseCompleted == CalibrationEngine.CalibrationPhase.POINT_3:
+            self.eventQueueManager.fireEvent(
+                'cal-update-instruction-text', self.afterPoint3Text)
+
+        if event.thermalVisualTransform is not None:
+            logger.debug(f"Calibration solution found")
+            # Re-publish the final composite frames once more. In practice, the
+            # browser's MJPEG decoder can lag behind the producer by a frame at
+            # the instant calibration completes (especially if the modal closes
+            # or the engine stops immediately). Re-sending ensures the last
+            # frame is what the user sees.
+            self.contentManager.registerVideoFrame(
+                'cal-vis-frame', event.visFrame)
+            self.contentManager.registerVideoFrame(
+                'cal-therm-frame', event.thermFrame)
+            self.calibrationEngine = None
+            self.lastTransformMatrix = event.thermalVisualTransform
+            self.eventQueueManager.fireEvent('cal-update-dialog', event)
+
+    def _dashUpdateInstructionTextHandler(self, text: str, eventList):
+        if eventList is None or len(eventList) == 0 or eventList[-1] is None:
+            return text
+        return eventList[-1]
+
+    def _dashToggleDialogHandler(self, isOpen: bool):
         """ Toggles the calibration dialog open/closed.
         """
-        return not isOpen
+        isOpen = not isOpen
+        if isOpen:
+            self.calibrationEngine = CalibrationEngine()
+        return isOpen
 
-    def _updateDialogHandler(self,
-                             row1col1, row1col2, row1col3, row1col4,
-                             row2col1, row2col2, row2col3, row2col4,
-                             acceptDisabled, eventData):
-        if not eventData or len(eventData) == 0:
-            return (row1col1, row1col2, row1col3, row1col4,
-                    row2col1, row2col2, row2col3, row2col4, acceptDisabled)
-        result = eventData[-1] or dict()
+    def _dashUpdateDialogHandler(self,
+                                 acceptDisabled,
+                                 eventList):
+        if eventList is None or len(eventList) == 0 or eventList[-1] is None:
+            return acceptDisabled
+        result = eventList[-1] or CalibrationProgressEvent()
 
-        phaseCompleted = result.get(
-            'phaseCompleted', CalibrationEngine1Ball.CalibrationPhase.INACTIVE)
-        if phaseCompleted > CalibrationEngine1Ball.CalibrationPhase.INACTIVE:
-            calibratedVisDemo = self.contentManager.registerImage(
-                'cal-vis-demo', result['visDemo'])
-            calibratedThermDemo = self.contentManager.registerImage(
-                'cal-therm-demo', result['thermDemo'])
+        # Enable accept once phase 3 is completed.
+        acceptDisabled = result.phaseCompleted != CalibrationEngine.CalibrationPhase.POINT_3
+        if not acceptDisabled:
+            logger.debug(f"Calibration completed successfully.")
 
-        videoSrcVisual = \
-            self.contentManager.getVideoFrameEndpoint('cal-vis-frame')
-        videoSrcThermal = \
-            self.contentManager.getVideoFrameEndpoint('cal-therm-frame')
-
-        acceptDisabled = True
-        if phaseCompleted == CalibrationEngine1Ball.CalibrationPhase.INACTIVE:
-            row1col1 = html.Img(
-                src=videoSrcVisual, style=self.modalGridImageStyle)
-            row2col1 = html.Img(
-                src=videoSrcThermal, style=self.modalGridImageStyle)
-            row1col2 = row2col2 = "2"
-            row1col3 = row2col3 = "3"
-            row1col4 = row2col4 = "4"
-        elif phaseCompleted == CalibrationEngine1Ball.CalibrationPhase.POINT_1:
-            row1col1 = html.Img(
-                src=calibratedVisDemo, style=self.modalGridImageStyle)
-            row2col1 = html.Img(
-                src=calibratedThermDemo, style=self.modalGridImageStyle)
-            row1col2 = html.Img(
-                src=videoSrcVisual, style=self.modalGridImageStyle)
-            row2col2 = html.Img(
-                src=videoSrcThermal, style=self.modalGridImageStyle)
-        elif phaseCompleted == CalibrationEngine1Ball.CalibrationPhase.POINT_2:
-            row1col2 = html.Img(
-                src=calibratedVisDemo, style=self.modalGridImageStyle)
-            row2col2 = html.Img(
-                src=calibratedThermDemo, style=self.modalGridImageStyle)
-            row1col3 = html.Img(
-                src=videoSrcVisual, style=self.modalGridImageStyle)
-            row2col3 = html.Img(
-                src=videoSrcThermal, style=self.modalGridImageStyle)
-        elif phaseCompleted == CalibrationEngine1Ball.CalibrationPhase.POINT_3:
-            calibratedVisFinal = self.contentManager.registerImage(
-                'cal-vis-final', result['visFinal'])
-            calibratedThermFinal = self.contentManager.registerImage(
-                'cal-therm-final', result['thermFinal'])
-            row1col3 = html.Img(
-                src=calibratedVisDemo, style=self.modalGridImageStyle)
-            row2col3 = html.Img(
-                src=calibratedThermDemo, style=self.modalGridImageStyle)
-            row1col4 = html.Img(
-                src=calibratedVisFinal, style=self.modalGridImageStyle)
-            row2col4 = html.Img(
-                src=calibratedThermFinal, style=self.modalGridImageStyle)
-            acceptDisabled = False
-        else:
-            raise ValueError(f"Unknown calibration phase: {phaseCompleted}")
-
-        return (row1col1, row1col2, row1col3, row1col4,
-                row2col1, row2col2, row2col3, row2col4, acceptDisabled)
+        return acceptDisabled

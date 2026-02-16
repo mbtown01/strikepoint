@@ -1,17 +1,17 @@
 import cv2
 import argparse
 import numpy as np
+import threading
 
 from time import monotonic
 from logging import getLogger
 from queue import Queue
-from time import sleep, monotonic
+from time import monotonic
 from os import environ
 
-from strikepoint.frames import FrameInfo, FrameInfoReader
+from strikepoint.frames import FrameInfo, FileBasedFrameInfoProvider
 from strikepoint.logging import setupLogging
 from strikepoint.dash.app import StrikePointDashApp, FrameInfoProvider
-from strikepoint.frames import FrameInfo, FrameInfoReader
 from strikepoint.driver import SplibDriver
 
 msgQueue = Queue()
@@ -21,36 +21,6 @@ logger = getLogger("strikepoint")
 
 IMAGE_WIDTH = 320
 IMAGE_HEIGHT = 240
-
-
-class FileBasedFrameInfoProvider(FrameInfoProvider):
-    """A fake thermal driver that reads frames from a binary file.
-    """
-
-    def __init__(self, fileName: str, timestampScale: float = 1.0):
-        self.reader = FrameInfoReader(fileName)
-        self.timestampScale = timestampScale
-        self.lastFrameTimestamp = None
-        self.lastLocalTimestamp = None
-
-    def getFrameInfo(self):
-        frameInfo = self.reader.readFrameInfo()
-        if frameInfo is None:
-            self.reader.rewind()
-            frameInfo = self.reader.readFrameInfo()
-            self.lastFrameTimestamp = None
-            logger.debug("Rewound recording file")
-        if self.lastFrameTimestamp is None:
-            self.lastFrameTimestamp = frameInfo.timestamp
-            self.lastLocalTimestamp = monotonic()
-            frameInfo = self.reader.readFrameInfo()
-
-        localDuration = monotonic() - self.lastLocalTimestamp
-        fileDuration = frameInfo.timestamp - self.lastFrameTimestamp
-        durationDelta = fileDuration - localDuration
-        if durationDelta > 0:
-            sleep(durationDelta)
-        return frameInfo
 
 
 class DeviceBasedFrameInfoProvider(FrameInfoProvider):
@@ -117,10 +87,11 @@ if __name__ == "__main__":
     if args.input_recording:
         logger.info(f"Using recording file: {args.input_recording}")
         frameInfoProvider = FileBasedFrameInfoProvider(
-            args.input_recording, timestampScale=2.0)
+            args.input_recording, timestampScale=0.1)
     else:
         from picamera2 import Picamera2
         frameInfoProvider = DeviceBasedFrameInfoProvider()
 
+    threading.current_thread().name = f"StrikePoint main thread"
     app_instance = StrikePointDashApp(frameInfoProvider, msgQueue)
     app_instance.run()

@@ -2,6 +2,7 @@
 #include <linux/types.h>
 #include <memory.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #include "error.h"
 #include "lepton.h"
@@ -43,6 +44,7 @@ LeptonDriver::LeptonDriver(Logger &logger, ILeptonImpl &impl) :
     _thread = std::thread([this] {
         _is_running.store(true);
         try {
+            pthread_setname_np(pthread_self(), "Lepton capture driver");
             _driver_main();
         } catch (const LeptonDriver::eof_error &e) {
             // gracefully exit on eof
@@ -156,7 +158,7 @@ LeptonDriver::_driver_main()
             while ((raw_buffer[0] & 0x0F) != 0 || raw_buffer[1] != 0) {
                 if (sync_attempt_count++ > 300)
                     REBOOT("trouble syncing frame start");
-                LOG_DEBUG(_logger, "re-sync %d/300", sync_attempt_count);
+                // LOG_DEBUG(_logger, "re-sync %d/300", sync_attempt_count);
                 usleep(10000);
                 _impl.spi_read(raw_buffer, PACKET_SIZE);
             }

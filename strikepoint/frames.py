@@ -1,10 +1,14 @@
-import numpy as np
 import cv2
+import numpy as np
 
+from logging import getLogger
+from time import sleep, monotonic
 from struct import pack, unpack
 from msgpack import packb, unpackb
 
 _HEADER_MAGIC_STR = b'STRKPT25'
+
+logger = getLogger("strikepoint")
 
 
 class FrameInfo:
@@ -17,6 +21,12 @@ class FrameInfo:
         self.rgbFrames = dict()
         self.rawFrames = dict()
         self.metadata = dict()
+
+
+class FrameInfoProvider:
+
+    def getFrameInfo(self):
+        raise NotImplementedError()
 
 
 class FrameInfoWriter:
@@ -122,3 +132,33 @@ class FrameInfoReader:
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.close()
+
+
+class FileBasedFrameInfoProvider(FrameInfoProvider):
+    """A fake thermal driver that reads frames from a binary file.
+    """
+
+    def __init__(self, fileName: str, timestampScale: float = 1.0):
+        self.reader = FrameInfoReader(fileName)
+        self.timestampScale = timestampScale
+        self.lastFrameTimestamp = None
+        self.lastLocalTimestamp = None
+
+    def getFrameInfo(self):
+        frameInfo = self.reader.readFrameInfo()
+        if frameInfo is None:
+            self.reader.rewind()
+            frameInfo = self.reader.readFrameInfo()
+            self.lastFrameTimestamp = None
+            logger.debug("Rewound recording file")
+        if self.lastFrameTimestamp is None:
+            self.lastFrameTimestamp = frameInfo.timestamp
+            self.lastLocalTimestamp = monotonic()
+            frameInfo = self.reader.readFrameInfo()
+
+        localDuration = monotonic() - self.lastLocalTimestamp
+        fileDuration = frameInfo.timestamp - self.lastFrameTimestamp
+        durationDelta = self.timestampScale * (fileDuration - localDuration)
+        if durationDelta > 0:
+            sleep(durationDelta)
+        return frameInfo

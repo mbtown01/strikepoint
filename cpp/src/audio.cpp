@@ -2,6 +2,7 @@
 #include <cmath>
 #include <ctime>
 #include <unistd.h>
+#include <pthread.h>
 
 #include "audio.h"
 #include "error.h"
@@ -16,6 +17,7 @@ AudioEngine::AudioEngine(Logger &logger,
     _logger(logger)
 {
     _thread = std::thread([this] {
+        pthread_setname_np(pthread_self(), "Audio capture driver");
         iirfilt_rrrf hp = iirfilt_rrrf_create_prototype(
             LIQUID_IIRDES_BUTTER,
             LIQUID_IIRDES_HIGHPASS,

@@ -1,16 +1,14 @@
 import dash_bootstrap_components as dbc
-import numpy as np
 
 from dash import Dash, html, dcc, no_update
 from dash.dependencies import Input, Output, State
-from enum import IntEnum
 from logging import getLogger
 
-from strikepoint.database import Database
-from strikepoint.engine.strike import StrikeDetectionEngine
+from strikepoint.engine.strike import StrikeDetectionEngine, StrikeDetectedEvent
 from strikepoint.dash.events import DashEventQueueManager
 from strikepoint.dash.content import ContentManager
-from strikepoint.frames import FrameInfo
+from strikepoint.dash.calibrate import CalibrationUpdatedEvent
+from strikepoint.events import EventBus, FrameEvent
 
 logger = getLogger("strikepoint")
 
@@ -20,17 +18,25 @@ class StrikeDetectionDashUI:
     def __init__(self,
                  app: Dash,
                  contentManager: ContentManager,
-                 eventQueueManager: DashEventQueueManager):
+                 eventQueueManager: DashEventQueueManager,
+                 eventBus: EventBus | None = None):
         self.strikeDetectionEngine = StrikeDetectionEngine()
         self.contentManager = contentManager
         self.eventQueueManager = eventQueueManager
+        self.thermalVisualTransform = None
+        self.eventBus = eventBus
         self.isOpen = False
 
+        self.eventBus.subscribe(FrameEvent, self._onFrameEvent)
+        self.eventBus.subscribe(StrikeDetectedEvent, self._onStrikeDetected)
+        self.eventBus.subscribe(
+            CalibrationUpdatedEvent, self._onCalibrationUpdatedEvent)
+
         self.eventQueueManager.registerEvent(
-            'strike-toggle-dialog', self._toggleDialogHandler,
+            'strike-toggle-dialog', self._dashToggleDialogHandler,
             [("strike-modal", "is_open")], needsEventData=False)
         self.eventQueueManager.registerEvent(
-            'strike-update-dialog', self._updateDialogHandler,
+            'strike-update-dialog', self._dashUpdateDialogHandler,
             [("strike-modal-body", "children")],
             needsEventData=True)
 
@@ -44,7 +50,8 @@ class StrikeDetectionDashUI:
             self.eventQueueManager.fireEvent('strike-toggle-dialog')
 
         self.modal = dbc.Modal([
-            dbc.ModalHeader(dbc.ModalTitle("Strike Detection (right-handed)")),
+            dbc.ModalHeader(dbc.ModalTitle(
+                "Strike Detection (right-handed)"), close_button=False),
             dbc.ModalBody(
                 html.Div("Waiting for strike...", id='strike-modal-body')
             ),
@@ -71,34 +78,23 @@ class StrikeDetectionDashUI:
     def launchDialog(self):
         self.eventQueueManager.fireEvent('strike-toggle-dialog')
 
-    def process(self, frameInfo: FrameInfo, thermalVisualTransform):
-        if not self.isOpen:
-            return None
-        result = self.strikeDetectionEngine.detectStrike(
-            frameInfo, thermalVisualTransform)
-        if result is None:
-            return None
+    def _onStrikeDetected(self, event: StrikeDetectedEvent) -> None:
+        logger.debug(
+            f"Strike detected! Left: {event.leftScore}, "
+            f"Right: {event.rightScore}")
+        logger.debug(
+            f"Strike detected! min diff {event.diffDegF.min()}")
+        logger.debug(
+            f"Strike detected! max diff {event.diffDegF.max()}")
 
-        logger.debug(
-            f"Strike detected! Left: {result['leftScore']}, "
-            f"Right: {result['rightScore']}")
-        logger.debug(
-            f"Strike detected! min diff {result['diffDegF'].min()}")
-        logger.debug(
-            f"Strike detected! max diff {result['diffDegF'].max()}")
+        self.contentManager.registerImage(
+            'strike-visual', event.visualImage)
+        self.contentManager.registerImage(
+            'strike-thermal', event.thermalImage)
+        color = 'danger' if event.leftScore < 0.4 else 'warning'
 
-        visualPath = self.contentManager.registerImage(
-            'strike-visual', result['visualImage'])
-        thermalPath = self.contentManager.registerImage(
-            'strike-thermal', result['thermalImage'])
-        color = 'success'
-        color = 'danger' if result['leftScore'] < 0.4 else 'warning'
-        headerText = f"Left Score: {result['leftScore']*100:.1f}%, " \
-            f"Right Score: {result['rightScore']*100:.1f}%"
-        # card = dbc.Card([
-        #     dbc.Alert(headerText, color=color),
-        #     dbc.CardBody(html.Img(src=contentPath)),
-        # ], style={"marginBottom": "4px"})
+        visualPath = self.contentManager.getImageEndpoint('strike-visual')
+        thermalPath = self.contentManager.getImageEndpoint('strike-thermal')
 
         imageStyle = {
             "width": "100%",
@@ -116,16 +112,16 @@ class StrikeDetectionDashUI:
             dbc.Row([
                 dbc.Col(
                     dbc.Card([
-                        dbc.CardHeader('Right Score'),
+                        dbc.CardHeader('Left Score'),
                         dbc.CardBody(
-                            html.H1(f"{result['rightScore']*100:.1f}%"))
+                            html.H1(f"{event.leftScore*100:.1f}%"))
                     ], color=color, inverse=True, style={"marginBottom": "4px"})
                 ),
                 dbc.Col(
                     dbc.Card([
-                        dbc.CardHeader('Left Score'),
+                        dbc.CardHeader('Right Score'),
                         dbc.CardBody(
-                            html.H1(f"{result['leftScore']*100:.1f}%"))
+                            html.H1(f"{event.rightScore*100:.1f}%"))
                     ], color=color, inverse=True, style={"marginBottom": "4px"})
                 )
             ],
@@ -135,10 +131,18 @@ class StrikeDetectionDashUI:
             fluid=True
         )
 
-        self.eventQueueManager.fireEvent(
-            'strike-update-dialog', contents)
+        self.eventQueueManager.fireEvent('strike-update-dialog', contents)
 
-    def _toggleDialogHandler(self, isOpen: bool):
+    def _onCalibrationUpdatedEvent(self, event: CalibrationUpdatedEvent) -> None:
+        self.thermalVisualTransform = event.thermalVisualTransform
+
+    def _onFrameEvent(self, event: FrameEvent) -> None:
+        if not self.isOpen or self.thermalVisualTransform is None:
+            return None
+        self.strikeDetectionEngine.process(
+            self.eventBus, event.frameInfo, self.thermalVisualTransform)
+
+    def _dashToggleDialogHandler(self, isOpen: bool):
         """ Toggles the calibration dialog open/closed.
         """
         self.isOpen = not self.isOpen
@@ -148,5 +152,5 @@ class StrikeDetectionDashUI:
 
         return self.isOpen
 
-    def _updateDialogHandler(self, body, eventData):
+    def _dashUpdateDialogHandler(self, body, eventData):
         return eventData

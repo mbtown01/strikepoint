@@ -1,13 +1,25 @@
+from dataclasses import dataclass
 import cv2
 import numpy as np
 
 from logging import getLogger
+from typing import Dict, Any
 
 from strikepoint.engine.util import findBrightestVisualCircles
+from strikepoint.events import EventBus
 
 RED, GREEN, BLUE = (0, 0, 255), (0, 255, 0), (255, 0, 0)
 
 logger = getLogger("strikepoint")
+
+
+@dataclass(frozen=True)
+class StrikeDetectedEvent:
+    visualImage: np.array
+    thermalImage: np.array
+    diffDegF: float
+    leftScore: float
+    rightScore: float
 
 
 class StrikeDetectionEngine:
@@ -20,7 +32,7 @@ class StrikeDetectionEngine:
     def reset(self):
         self.observedSeq = list()
 
-    def detectStrike(self, frameInfo: dict, thermalVisualTransform: np.ndarray):
+    def process(self, eventBus: EventBus, frameInfo: dict, thermalVisualTransform: np.ndarray):
         self.observedSeq.append(frameInfo)
         while len(self.observedSeq) > 2:
             self.observedSeq = self.observedSeq[1:]
@@ -103,10 +115,11 @@ class StrikeDetectionEngine:
         cv2.circle(
             thermalDiffW, (int(c[0]), int(c[1])), c[2], GREEN, 2)
         cv2.circle(final, (int(c[0]), int(c[1])), c[2], GREEN, 2)
-        return {
-            'visualImage': final,
-            'thermalImage': thermalDiffW,
-            'diffDegF': diff,
-            'leftScore': leftScore,
-            'rightScore': rightScore
-        }
+
+        eventBus.publish(StrikeDetectedEvent(
+            visualImage=final,
+            thermalImage=thermalDiffW,
+            diffDegF=diff,
+            leftScore=leftScore,
+            rightScore=rightScore
+        ))
