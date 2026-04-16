@@ -90,3 +90,4 @@ class ContentManager:
         contentName = f"{name}_{self._imageSeq:08d}"
         self._imageSeq += 1
         self._encodedImageMap[contentName] = self._encodeImageAsJpeg(content)
+        return self.getImageEndpoint(contentName)

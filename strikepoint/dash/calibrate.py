@@ -39,14 +39,14 @@ class CalibrationDashUi:
         self.eventBus.subscribe(CalibrationProgressEvent,
                                 self._onCalibrationProgressEvent)
 
-        self.eventQueueManager.registerEvent(
+        self.eventQueueManager.registerEventHandler(
             'cal-toggle-dialog', self._dashToggleDialogHandler,
             [("cal-modal", "is_open")], needsEventData=False)
-        self.eventQueueManager.registerEvent(
+        self.eventQueueManager.registerEventHandler(
             'cal-update-dialog', self._dashUpdateDialogHandler,
             [("cal-accept-btn", "disabled")],
             needsEventData=True)
-        self.eventQueueManager.registerEvent(
+        self.eventQueueManager.registerEventHandler(
             'cal-update-instruction-text', self._dashUpdateInstructionTextHandler,
             [("cal-instruction-text", "children")], needsEventData=True)
 

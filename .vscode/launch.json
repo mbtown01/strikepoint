@@ -27,14 +27,25 @@
             "justMyCode": true
         },
         {
-            "name": "Web app (testing)",
+            "name": "Web app (strike testing)",
             "type": "debugpy",
             "request": "launch",
             "program": "main.py",
             "console": "internalConsole",
             "args": [
                 "--input-recording",
-                // "dev/data/demo-with-audio-2.bin"
+                "dev/data/demo-with-audio-2.bin"
+            ],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Web app (calibration testing)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "main.py",
+            "console": "internalConsole",
+            "args": [
+                "--input-recording",
                 "dev/data/demo-1ball-calibrate3.bin"
             ],
             "cwd": "${workspaceFolder}"

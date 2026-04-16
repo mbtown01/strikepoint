@@ -60,16 +60,16 @@ class StrikePointDashApp:
             eventQueueManager=self.eventQueueManager,
             eventBus=self.eventBus)
 
-        self.eventQueueManager.registerEvent(
+        self.eventQueueManager.registerEventHandler(
             'app-add-history-card', self._dashAddHistoryCardHandler,
             [("history-div", "children")])
-        self.eventQueueManager.registerEvent(
+        self.eventQueueManager.registerEventHandler(
             'app-update-calibration', self._dashUpdateCalibrationHandler, [])
-        self.eventQueueManager.registerEvent(
+        self.eventQueueManager.registerEventHandler(
             'app-update-calibration-status', self._dashUpdateCalibrationStatusHandler,
             [("calibrate-btn", "children"),
              ("calibrate-btn", "color")], needsEventData=False)
-        self.eventQueueManager.registerEvent(
+        self.eventQueueManager.registerEventHandler(
             'app-update-log-entries', self._dashUpdateLogEntriesHandler,
             [("log-content-div", "children")])
 

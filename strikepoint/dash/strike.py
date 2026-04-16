@@ -32,10 +32,10 @@ class StrikeDetectionDashUI:
         self.eventBus.subscribe(
             CalibrationUpdatedEvent, self._onCalibrationUpdatedEvent)
 
-        self.eventQueueManager.registerEvent(
+        self.eventQueueManager.registerEventHandler(
             'strike-toggle-dialog', self._dashToggleDialogHandler,
             [("strike-modal", "is_open")], needsEventData=False)
-        self.eventQueueManager.registerEvent(
+        self.eventQueueManager.registerEventHandler(
             'strike-update-dialog', self._dashUpdateDialogHandler,
             [("strike-modal-body", "children")],
             needsEventData=True)
@@ -87,14 +87,11 @@ class StrikeDetectionDashUI:
         logger.debug(
             f"Strike detected! max diff {event.diffDegF.max()}")
 
-        self.contentManager.registerImage(
+        visualPath = self.contentManager.registerImage(
             'strike-visual', event.visualImage)
-        self.contentManager.registerImage(
+        thermalPath = self.contentManager.registerImage(
             'strike-thermal', event.thermalImage)
         color = 'danger' if event.leftScore < 0.4 else 'warning'
-
-        visualPath = self.contentManager.getImageEndpoint('strike-visual')
-        thermalPath = self.contentManager.getImageEndpoint('strike-thermal')
 
         imageStyle = {
             "width": "100%",

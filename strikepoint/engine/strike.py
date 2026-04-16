@@ -95,31 +95,26 @@ class StrikeDetectionEngine:
             flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
             borderValue=0)
 
-        # Analyze the warped thermal diff to see if there's a
-        # significant heat signature at the location of the ball.  If
-        # not, we discard this as a non-strike event
-        diffGrayW = cv2.cvtColor(thermalDiffW, cv2.COLOR_RGB2GRAY)
-        if diffGrayW.sum() == 0:
-            return None
-
         # Build final images and compute left/right scores
-        final = cv2.add(v1, thermalDenoisedW)
-        diffShape = tuple(final.shape[:2][::-1])
+        diffGrayW = cv2.cvtColor(thermalDiffW, cv2.COLOR_RGB2GRAY)
+        visualFinal = cv2.add(v1, thermalDenoisedW)
+        diffShape = tuple(visualFinal.shape[:2][::-1])
         leftDiff, rightDiff = diffGrayW.copy(), diffGrayW.copy()
-        cv2.rectangle(
-            rightDiff, (0, 0), (c[0]-c[2], diffShape[1]), 0, -1, 1)
-        cv2.rectangle(leftDiff, (c[0]+c[2], 0), diffShape, 0, -1, 1)
-        leftScore = leftDiff.sum() / diffGrayW.sum()
-        rightScore = rightDiff.sum() / diffGrayW.sum()
+        cv2.rectangle(rightDiff, (0, 0), (c[0]+c[2], diffShape[1]), 0, -1, 1)
+        cv2.rectangle(leftDiff, (c[0]-c[2], 0), diffShape, 0, -1, 1)
+        totalScore = leftDiff.sum() + rightDiff.sum()
+        if totalScore > 0:
+            leftScore = leftDiff.sum() / totalScore
+            rightScore = rightDiff.sum() / totalScore
 
-        cv2.circle(
-            thermalDiffW, (int(c[0]), int(c[1])), c[2], GREEN, 2)
-        cv2.circle(final, (int(c[0]), int(c[1])), c[2], GREEN, 2)
+            cv2.circle(
+                thermalDiffW, (int(c[0]), int(c[1])), c[2], GREEN, 2)
+            cv2.circle(visualFinal, (int(c[0]), int(c[1])), c[2], GREEN, 2)
 
-        eventBus.publish(StrikeDetectedEvent(
-            visualImage=final,
-            thermalImage=thermalDiffW,
-            diffDegF=diff,
-            leftScore=leftScore,
-            rightScore=rightScore
-        ))
+            eventBus.publish(StrikeDetectedEvent(
+                visualImage=visualFinal,
+                thermalImage=thermalDiffW,
+                diffDegF=diff,
+                leftScore=leftScore,
+                rightScore=rightScore
+            ))
