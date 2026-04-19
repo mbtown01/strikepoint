@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+
+{% block title %}History{% endblock %}
+
+{% block content %}
+<div id="history-list" class="history-list">
+  {% if not strikes %}
+  <div class="empty-state">
+    <p>No strikes recorded yet.</p>
+  </div>
+  {% endif %}
+  {% for s in strikes %}
+  <div class="card history-card">
+    <div class="history-images">
+      <img src="{{ s.visual_url }}" alt="Visual">
+      <img src="{{ s.thermal_url }}" alt="Thermal">
+    </div>
+    <div class="history-meta">
+      <div class="score-row">
+        <div class="score-block {% if s.left_score >= 0.4 %}score-ok{% else %}score-warn{% endif %}">
+          <div class="score-label">Left</div>
+          <div class="score-value">{{ "%.0f"|format(s.left_score * 100) }}%</div>
+        </div>
+        <div class="score-block {% if s.right_score >= 0.4 %}score-ok{% else %}score-warn{% endif %}">
+          <div class="score-label">Right</div>
+          <div class="score-value">{{ "%.0f"|format(s.right_score * 100) }}%</div>
+        </div>
+      </div>
+      <div class="history-timestamp">{{ s.timestamp }}</div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

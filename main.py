@@ -11,7 +11,7 @@ from os import environ
 
 from strikepoint.frames import FrameInfo, FileBasedFrameInfoProvider
 from strikepoint.logging import setupLogging
-from strikepoint.dash.app import StrikePointDashApp, FrameInfoProvider
+from strikepoint.web.app import StrikePointWebApp as StrikePointDashApp, FrameInfoProvider
 from strikepoint.driver import SplibDriver
 
 msgQueue = Queue()
@@ -77,7 +77,7 @@ if __name__ == "__main__":
         help="use a file-based recording instead of live camera inputs")
     args = parser.parse_args()
 
-    logger.info("Starting StrikePoint Dash App")
+    logger.info("Starting StrikePoint")
 
     getLogger('werkzeug').setLevel('WARNING')
     getLogger('picamera2').setLevel('WARNING')

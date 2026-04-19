@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}Strike Detection{% endblock %}
+
+{% block header_actions %}
+<button id="detect-btn"
+        class="btn {% if is_detecting %}btn-danger{% else %}btn-success{% endif %}"
+        onclick="toggleDetection()">
+  {% if is_detecting %}Stop Detection{% else %}Start Detection{% endif %}
+</button>
+<button class="btn btn-outline" onclick="startCalibration()">
+  {% if is_calibrated %}Re-calibrate{% else %}Calibrate{% endif %}
+</button>
+{% endblock %}
+
+{% block content %}
+<div class="strike-layout">
+
+  <div class="camera-panel">
+    <div class="card camera-card">
+      <div class="card-label">Visual</div>
+      <img class="camera-feed" src="{{ visual_src }}" alt="Visual camera feed">
+    </div>
+    <div class="card camera-card">
+      <div class="card-label">Thermal</div>
+      <img class="camera-feed" src="{{ thermal_src }}" alt="Thermal camera feed">
+    </div>
+  </div>
+
+  <div class="result-panel">
+    <div id="strike-result" class="card strike-placeholder">
+      <div class="placeholder-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
+          <circle cx="12" cy="12" r="10"/>
+          <circle cx="12" cy="12" r="4"/>
+        </svg>
+      </div>
+      <div class="placeholder-text">
+        {% if is_detecting %}Waiting for strike...{% else %}Press Start Detection to begin.{% endif %}
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  window._isDetecting = {{ 'true' if is_detecting else 'false' }};
+  window._calVisSrc   = {{ cal_vis_src | tojson }};
+  window._calThermSrc = {{ cal_therm_src | tojson }};
+</script>
+{% endblock %}

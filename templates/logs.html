@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block title %}Logs{% endblock %}
+
+{% block header_actions %}
+<button id="record-btn"
+        class="btn {% if is_recording %}btn-danger{% else %}btn-outline{% endif %}"
+        onclick="toggleRecording()">
+  {% if is_recording %}Stop Recording{% else %}Start Recording{% endif %}
+</button>
+{% endblock %}
+
+{% block content %}
+<div class="logs-layout">
+
+  <div class="logs-sidebar">
+    <div class="card camera-card">
+      <div class="card-label">Visual</div>
+      <img id="visual-feed" class="camera-feed" alt="Visual feed">
+    </div>
+    <div class="card camera-card">
+      <div class="card-label">Thermal</div>
+      <img id="thermal-feed" class="camera-feed" alt="Thermal feed">
+    </div>
+  </div>
+
+  <div id="log-pane" class="log-pane">
+    {% for entry in log_buffer %}
+    <div class="log-line log-{{ entry.level | lower }}">{{ entry.message }}</div>
+    {% endfor %}
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  window._isRecording = {{ 'true' if is_recording else 'false' }};
+  document.addEventListener('DOMContentLoaded', () => {
+    const pane = document.getElementById('log-pane');
+    if (pane) pane.scrollTop = pane.scrollHeight;
+
+    let n = 0;
+    const feeds = [
+      { id: 'visual-feed', src: '{{ visual_frame_src }}' },
+      { id: 'thermal-feed', src: '{{ thermal_frame_src }}' },
+    ];
+    feeds.forEach(({ id, src }) => {
+      const img = document.getElementById(id);
+      const poll = () => { img.src = src + '?t=' + (n++); };
+      poll();
+      setInterval(poll, 100);
+    });
+  });
+</script>
+{% endblock %}
